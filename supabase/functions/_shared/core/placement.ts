@@ -25,10 +25,8 @@ export function placeSong(
   neighbours: readonly Neighbour[],
   rng: () => number,
 ): { position: Vec3; island: boolean } {
-  // Weights only act as relative mean weights here, so they are floored at 0
-  // but not capped at 1 (a weight of 3 must count 3x a weight of 1).
   const usable = neighbours
-    .map((n) => ({ position: n.position, weight: Math.max(0, n.weight), localRadius: n.localRadius }))
+    .map((n) => ({ position: n.position, weight: clamp01(n.weight), localRadius: n.localRadius }))
     .filter((n): n is { position: Vec3; weight: number; localRadius: number | null } =>
       n.position !== null && n.weight > 0
     );

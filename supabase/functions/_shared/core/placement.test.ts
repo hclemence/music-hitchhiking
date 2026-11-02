@@ -18,8 +18,8 @@ const origin: Vec3 = { x: 0, y: 0, z: 0 };
 describe('placeSong', () => {
   test('lands within 10% of mean localRadius of the weighted mean', () => {
     const neighbours: Neighbour[] = [
-      { position: { x: 0, y: 0, z: 0 }, weight: 1, localRadius: 50 },
-      { position: { x: 10, y: 0, z: 0 }, weight: 3, localRadius: 150 },
+      { position: { x: 0, y: 0, z: 0 }, weight: 0.25, localRadius: 50 },
+      { position: { x: 10, y: 0, z: 0 }, weight: 0.75, localRadius: 150 },
     ];
     let maxSeen = 0;
     for (let i = 0; i < 200; i++) {
@@ -30,6 +30,21 @@ describe('placeSong', () => {
       expect(d).toBeLessThanOrEqual(10);
     }
     expect(maxSeen).toBeGreaterThan(1); // offset is actually applied
+  });
+
+  test('treats a weight above 1 as 1', () => {
+    const neighbours: Neighbour[] = [
+      { position: { x: 0, y: 0, z: 0 }, weight: 1, localRadius: 100 },
+      { position: { x: 10, y: 0, z: 0 }, weight: 5, localRadius: 100 },
+    ];
+    let maxSeen = 0;
+    for (let i = 0; i < 200; i++) {
+      const r = placeSong(neighbours, seededRng(`cap-${i}`));
+      const d = distance(r.position, { x: 5, y: 0, z: 0 });
+      maxSeen = Math.max(maxSeen, d);
+      expect(d).toBeLessThanOrEqual(10);
+    }
+    expect(maxSeen).toBeGreaterThan(1);
   });
 
   test('ignores neighbours without position or with weight 0', () => {
