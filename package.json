@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "vitest run supabase/functions/_shared",
-    "test:db": "supabase test db",
+    "db:start": "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io supabase start -x studio,imgproxy,storage-api,logflare,vector,supavisor,mailpit,realtime,postgres-meta",
+    "db:reset": "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io supabase db reset",
+    "test:db": "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io supabase test db",
     "test:integration": "vitest run tests/integration"
   },
   "packageManager": "pnpm@10.28.0",
