@@ -23,7 +23,7 @@ begin
                  when 'suggestion' then 0.5
                  when 'hop' then 0.4
                  when 'start' then 0.3
-               end * power(0.5, extract(epoch from (p_now - v.created_at)) / 3600 / 72)
+               end * power(0.5, greatest(extract(epoch from (p_now - v.created_at)), 0) / 3600 / 72)
              )
              from public.visits v
              where v.song_id = s.id and v.created_at > p_now - interval '30 days'
@@ -49,7 +49,7 @@ begin
 
   -- Trace brightness: halves every 7 days since the last exchange.
   update public.traces
-  set brightness = power(0.5, extract(epoch from (p_now - last_exchange_at)) / 86400 / 7);
+  set brightness = power(0.5, greatest(extract(epoch from (p_now - last_exchange_at)), 0) / 86400 / 7);
 end $$;
 
 revoke all on function public.tick_brightness(timestamptz) from public, anon, authenticated;

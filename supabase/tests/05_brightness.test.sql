@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(28);
+select plan(34);
 
 -- fixtures (run as postgres). Each song gets only the visits its case lists.
 -- T is the fixed "now" passed to tick_brightness.
@@ -23,7 +23,12 @@ insert into public.songs (id, mbid, title, artist, x, y, z, local_radius, spotif
   ('00000000-0000-0000-0000-0000000000ba', '00000000-0000-0000-0000-0000000000ca', 'old visit', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed'),
   ('00000000-0000-0000-0000-0000000000bb', '00000000-0000-0000-0000-0000000000cb', 'sample plus busy', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed'),
   ('00000000-0000-0000-0000-0000000000bc', '00000000-0000-0000-0000-0000000000cc', 'real dock plus stale', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed'),
-  ('00000000-0000-0000-0000-0000000000bd', '00000000-0000-0000-0000-0000000000cd', 'mixed kinds', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed');
+  ('00000000-0000-0000-0000-0000000000bd', '00000000-0000-0000-0000-0000000000cd', 'mixed kinds', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed'),
+  ('00000000-0000-0000-0000-0000000000be', '00000000-0000-0000-0000-0000000000ce', 'like only', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed'),
+  ('00000000-0000-0000-0000-0000000000bf', '00000000-0000-0000-0000-0000000000cf', 'suggestion only', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed'),
+  ('00000000-0000-0000-0000-0000000000b0', '00000000-0000-0000-0000-0000000000c0', 'hop only', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed'),
+  ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000f2', 'start only', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed'),
+  ('00000000-0000-0000-0000-0000000000f3', '00000000-0000-0000-0000-0000000000f4', 'future visit', 'A', 0, 0, 0, 10, 's', 'a', 'y', 0, 'inactive', 'seed');
 
 insert into public.visits (song_id, kind, created_at) values
   ('00000000-0000-0000-0000-0000000000b1', 'dock', '2026-11-02 12:00+00'::timestamptz - interval '360 hours'),
@@ -39,7 +44,12 @@ insert into public.visits (song_id, kind, created_at) values
   ('00000000-0000-0000-0000-0000000000bb', 'dock', '2026-11-02 12:00+00'),
   ('00000000-0000-0000-0000-0000000000bc', 'hop',  '2026-11-02 12:00+00'::timestamptz - interval '31 days'),
   ('00000000-0000-0000-0000-0000000000bd', 'like', '2026-11-02 12:00+00'::timestamptz - interval '72 hours'),
-  ('00000000-0000-0000-0000-0000000000bd', 'start', '2026-11-02 12:00+00'::timestamptz - interval '72 hours');
+  ('00000000-0000-0000-0000-0000000000bd', 'start', '2026-11-02 12:00+00'::timestamptz - interval '72 hours'),
+  ('00000000-0000-0000-0000-0000000000be', 'like', '2026-11-02 12:00+00'::timestamptz - interval '72 hours'),
+  ('00000000-0000-0000-0000-0000000000bf', 'suggestion', '2026-11-02 12:00+00'::timestamptz - interval '72 hours'),
+  ('00000000-0000-0000-0000-0000000000b0', 'hop', '2026-11-02 12:00+00'::timestamptz - interval '72 hours'),
+  ('00000000-0000-0000-0000-0000000000f1', 'start', '2026-11-02 12:00+00'::timestamptz - interval '72 hours'),
+  ('00000000-0000-0000-0000-0000000000f3', 'like', '2026-11-02 12:00+00'::timestamptz + interval '72 hours');
 
 insert into public.docks (user_id, song_id, is_sample, ship_colour) values
   ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000b7', false, '#aaaaaa'),
@@ -50,7 +60,8 @@ insert into public.docks (user_id, song_id, is_sample, ship_colour) values
 insert into public.traces (id, holder_id, target_id, origin_song_id, last_exchange_at, brightness) values
   ('00000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000b1', '2026-11-02 12:00+00'::timestamptz - interval '7 days', 1),
   ('00000000-0000-0000-0000-0000000000e2', '00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000b1', '2026-11-02 12:00+00'::timestamptz - interval '23 days', 1),
-  ('00000000-0000-0000-0000-0000000000e3', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000b1', '2026-11-02 12:00+00'::timestamptz - interval '24 days', 1);
+  ('00000000-0000-0000-0000-0000000000e3', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000b1', '2026-11-02 12:00+00'::timestamptz - interval '24 days', 1),
+  ('00000000-0000-0000-0000-0000000000e4', '00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000b1', '2026-11-02 12:00+00'::timestamptz + interval '7 days', 0);
 
 -- privileges and shape
 select has_function('public', 'tick_brightness', array['timestamptz'], 'tick_brightness(timestamptz) exists');
@@ -71,6 +82,13 @@ select ok(abs((select brightness from public.songs where id = '00000000-0000-000
 select is((select brightness from public.songs where id = '00000000-0000-0000-0000-0000000000b6'), 1::real, 'three fresh dock visits are capped at 1');
 select ok(abs((select brightness from public.songs where id = '00000000-0000-0000-0000-0000000000bd') - 0.45) < 1e-6, 'like 0.6 + start 0.3 at 72 hours old is 0.45');
 
+-- each kind's weight, pinned with a single visit at 72 hours (factor 0.5)
+select ok(abs((select brightness from public.songs where id = '00000000-0000-0000-0000-0000000000be') - 0.3) < 1e-6, 'like weight 0.6: one visit at 72 hours is 0.3');
+select ok(abs((select brightness from public.songs where id = '00000000-0000-0000-0000-0000000000bf') - 0.25) < 1e-6, 'suggestion weight 0.5: one visit at 72 hours is 0.25');
+select ok(abs((select brightness from public.songs where id = '00000000-0000-0000-0000-0000000000b0') - 0.2) < 1e-6, 'hop weight 0.4: one visit at 72 hours is 0.2');
+select ok(abs((select brightness from public.songs where id = '00000000-0000-0000-0000-0000000000f1') - 0.15) < 1e-6, 'start weight 0.3: one visit at 72 hours is 0.15');
+select ok(abs((select brightness from public.songs where id = '00000000-0000-0000-0000-0000000000f3') - 0.6) < 1e-6, 'a future-dated visit counts at its plain weight, not above it');
+
 -- overrides
 select is((select brightness from public.songs where id = '00000000-0000-0000-0000-0000000000b7'), 1::real, 'no visits, real person docked: brightness 1');
 select is((select status from public.songs where id = '00000000-0000-0000-0000-0000000000b7'), 'active'::public.song_status, 'no visits, real person docked: active');
@@ -90,6 +108,8 @@ select ok(abs((select brightness from public.traces where id = '00000000-0000-00
 select ok((select brightness from public.traces where id = '00000000-0000-0000-0000-0000000000e2') >= 0.1, 'trace 23 days old is still at least 0.1');
 
 select ok((select brightness from public.traces where id = '00000000-0000-0000-0000-0000000000e3') < 0.1, 'trace 24 days old is below 0.1');
+
+select is((select brightness from public.traces where id = '00000000-0000-0000-0000-0000000000e4'), 1::real, 'a future-dated trace exchange is brightness 1, not above');
 
 -- schedule
 select is((select schedule from cron.job where jobname = 'brightness-tick'), '0 * * * *', 'brightness-tick is scheduled hourly');
