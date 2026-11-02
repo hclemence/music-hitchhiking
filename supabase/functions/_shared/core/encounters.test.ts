@@ -58,12 +58,17 @@ test('excludes own dock, current song, path songs, seen docks, inactive songs', 
     dock('dNear45', 'near45'),
     dock('dFar6', 'far6'),
   ];
-  const result = run(stars, docks, {
-    ownDockId: 'dOwn',
-    pathSongIds: new Set(['p']),
-    seenDockIds: new Set(['dSeen']),
-  });
-  expect(result.map((e) => e.songId).sort()).toEqual(['far6', 'near1', 'near45']);
+  // Exactly two eligible near candidates and one far, so the result is fixed for any seed;
+  // every excluded dock sits in the near band and would change the result if it leaked through.
+  for (let i = 0; i < 20; i++) {
+    const result = run(stars, docks, {
+      ownDockId: 'dOwn',
+      pathSongIds: new Set(['p']),
+      seenDockIds: new Set(['dSeen']),
+      rng: seededRng(`excl${i}`),
+    });
+    expect(result.map((e) => e.songId).sort()).toEqual(['far6', 'near1', 'near45']);
+  }
 });
 
 test('groups docks per song: newest shown, othersCount counts the rest', () => {
@@ -80,11 +85,20 @@ test('groups docks per song: newest shown, othersCount counts the rest', () => {
 });
 
 test('widens radius x1.5 when a band is short', () => {
-  // r=10: near <5 is empty. r=15: near <7.5 holds 6 and 7, far 7.5..15 holds 10.
-  const { stars, docks } = field([6, 7, 10]);
-  const result = run(stars, docks);
-  expect(result.map((e) => e.songId).sort()).toEqual(['s10', 's6', 's7']);
-  expect(result[2].songId).toBe('s10');
+  // r=10: near (<5) is empty. r=15: near (<7.5) holds 6 and 7, far (7.5..15) holds 9 and 10.
+  // The nearest-3 fallback would always give 6, 7, 9, so seeing 10 proves widening happened.
+  const { stars, docks } = field([6, 7, 9, 10]);
+  const thirds = new Set<string>();
+  for (let i = 0; i < 30; i++) {
+    const result = run(stars, docks, { rng: seededRng(`widen${i}`) });
+    expect(result).toHaveLength(3);
+    expect(result[0].distance).toBeLessThan(7.5);
+    expect(result[1].distance).toBeLessThan(7.5);
+    expect(result[2].distance).toBeGreaterThanOrEqual(7.5);
+    expect(result[2].distance).toBeLessThanOrEqual(15);
+    thirds.add(result[2].songId);
+  }
+  expect(thirds.has('s10')).toBe(true);
 });
 
 test('after 6 widenings returns nearest 3', () => {
