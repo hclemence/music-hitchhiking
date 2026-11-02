@@ -10,6 +10,38 @@ create index kept_notices_owner_id_idx on public.kept_notices (owner_id);
 -- Views filter on auth.uid() inside the view, so qualifiers must not be pushed below it.
 alter view public.public_docks set (security_barrier = true);
 
+-- A dock that moves to a different song gets a new id, so a member cannot follow a person across
+-- docks by remembering an id, or revive a faded trace through it. Same song keeps the id.
+create or replace function public.set_dock(p_song_id uuid) returns uuid
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_uid uuid;
+  v_dock uuid;
+begin
+  v_uid := public.require_member();
+  if not exists (select 1 from public.songs s where s.id = p_song_id) then
+    raise exception 'unknown_song' using errcode = 'P0001';
+  end if;
+
+  insert into public.docks (user_id, song_id, is_sample, ship_colour)
+  select v_uid, p_song_id, false, p.ship_colour
+  from public.profiles p
+  where p.user_id = v_uid
+  on conflict (user_id) do update
+    set id = case when public.docks.song_id is distinct from excluded.song_id
+                  then gen_random_uuid() else public.docks.id end,
+        song_id = excluded.song_id,
+        ship_colour = excluded.ship_colour,
+        updated_at = now()
+  returning id into v_dock;
+
+  insert into public.visits (song_id, kind) values (p_song_id, 'dock');
+  update public.songs set brightness = 1, status = 'active' where id = p_song_id;
+  return v_dock;
+end;
+$$;
+
 create function public.like_dock(p_dock_id uuid) returns uuid
 language plpgsql security definer set search_path = ''
 as $$
@@ -17,6 +49,7 @@ declare
   v_uid uuid;
   v_dock public.docks;
   v_new_like boolean;
+  v_new_trace boolean;
   v_trace uuid;
 begin
   v_uid := public.require_member();
@@ -26,6 +59,9 @@ begin
   end if;
   if v_dock.user_id = v_uid then
     raise exception 'own_dock' using errcode = 'P0001';
+  end if;
+  if not exists (select 1 from public.songs s where s.id = v_dock.song_id and s.status = 'active') then
+    raise exception 'inactive_song' using errcode = 'P0001';
   end if;
 
   -- A repeated like only refreshes the trace: no second visit, no second notice.
@@ -45,9 +81,11 @@ begin
   values (v_uid, v_dock.user_id, v_dock.song_id)
   on conflict (holder_id, target_id) do update
     set last_exchange_at = now(), brightness = 1
-  returning id into v_trace;
+  returning id, (xmax = 0) into v_trace, v_new_trace;
 
-  if v_new_like then
+  -- The owner is told once per new like, or when a first trace appears for a song already liked
+  -- elsewhere (likes are unique per song, not per dock). A plain repeat like adds nothing.
+  if v_new_like or v_new_trace then
     insert into public.kept_notices (owner_id, song_id) values (v_dock.user_id, v_dock.song_id);
   end if;
   return v_trace;
@@ -150,7 +188,7 @@ create view public.my_inbox with (security_barrier) as
   from public.suggestions g
   join public.songs s on s.id = g.song_id
   left join public.profiles p on p.user_id = g.from_id
-  left join public.traces rt on rt.holder_id = g.to_id and rt.target_id = g.from_id
+  left join public.traces rt on rt.holder_id = g.to_id and rt.target_id = g.from_id and rt.brightness >= 0.1
   where g.to_id = auth.uid() and public.is_member()
   union all
   select k.id, 'kept'::text as kind, k.song_id, s.title, s.artist,

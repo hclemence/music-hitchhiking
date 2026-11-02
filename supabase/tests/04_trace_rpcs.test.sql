@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(91);
+select plan(107);
 
 create function pg_temp.login(uid uuid) returns void language plpgsql as $$
 begin
@@ -15,19 +15,23 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000a1', 'a@example.test'),
   ('00000000-0000-0000-0000-0000000000a2', 'b@example.test'),
   ('00000000-0000-0000-0000-0000000000a3', 'c@example.test'),
-  ('00000000-0000-0000-0000-0000000000a4', 'd@example.test');
+  ('00000000-0000-0000-0000-0000000000a4', 'd@example.test'),
+  ('00000000-0000-0000-0000-0000000000a5', 'e@example.test');
 insert into public.songs (id, mbid, title, artist, x, y, z, local_radius, spotify_url, apple_url, youtube_url, brightness, status, origin) values
   ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000c1', 'Song One', 'Artist One', 0, 0, 0, 10, 's1', 'a1', 'y1', 0.5, 'active', 'seed'),
   ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000c2', 'Song Two', 'Artist Two', 1, 0, 0, 10, 's2', 'a2', 'y2', 0.5, 'active', 'seed'),
   ('00000000-0000-0000-0000-0000000000b3', '00000000-0000-0000-0000-0000000000c3', 'Song Three', 'Artist Three', 2, 0, 0, 10, 's3', 'a3', 'y3', 0.5, 'active', 'seed'),
   ('00000000-0000-0000-0000-0000000000b4', '00000000-0000-0000-0000-0000000000c4', 'Song Four', 'Artist Four', 3, 0, 0, 10, 's4', 'a4', 'y4', 0.5, 'active', 'seed'),
-  ('00000000-0000-0000-0000-0000000000b5', '00000000-0000-0000-0000-0000000000c5', 'Song Five', 'Artist Five', 4, 0, 0, 10, 's5', 'a5', 'y5', 0.5, 'active', 'seed');
+  ('00000000-0000-0000-0000-0000000000b5', '00000000-0000-0000-0000-0000000000c5', 'Song Five', 'Artist Five', 4, 0, 0, 10, 's5', 'a5', 'y5', 0.5, 'active', 'seed'),
+  ('00000000-0000-0000-0000-0000000000b6', '00000000-0000-0000-0000-0000000000c6', 'Song Six', 'Artist Six', 5, 0, 0, 10, 's6', 'a6', 'y6', 0, 'inactive', 'seed');
 insert into public.profiles (user_id, colour_seed, ship_colour) values
   ('00000000-0000-0000-0000-0000000000a1', 'seed-a', '#aaaaaa'),
   ('00000000-0000-0000-0000-0000000000a2', 'seed-b', '#bbbbbb'),
-  ('00000000-0000-0000-0000-0000000000a3', 'seed-c', '#cccccc');
-insert into public.docks (id, song_id, is_sample, ship_colour) values
-  ('00000000-0000-0000-0000-0000000000d5', '00000000-0000-0000-0000-0000000000b2', true, '#dddddd');
+  ('00000000-0000-0000-0000-0000000000a3', 'seed-c', '#cccccc'),
+  ('00000000-0000-0000-0000-0000000000a5', 'seed-e', '#eeeeee');
+insert into public.docks (id, user_id, song_id, is_sample, ship_colour) values
+  ('00000000-0000-0000-0000-0000000000d5', null, '00000000-0000-0000-0000-0000000000b2', true, '#dddddd'),
+  ('00000000-0000-0000-0000-0000000000d6', '00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000b6', false, '#cccccc');
 
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
@@ -102,6 +106,28 @@ select is((select count(*) from public.likes where user_id = '00000000-0000-0000
 select is((select count(*) from public.traces), 1::bigint, 'a sample like creates no trace');
 select is((select count(*) from public.kept_notices), 1::bigint, 'a sample like creates no kept notice');
 
+-- a like already stored via the sample dock must not swallow the kept notice for a real dock on the same song
+reset role;
+select pg_temp.login('00000000-0000-0000-0000-0000000000a5');
+select lives_ok($$select public.set_dock('00000000-0000-0000-0000-0000000000b2')$$, 'E docks on s2');
+reset role;
+select set_config('test.e_dock', (select id::text from public.docks where user_id = '00000000-0000-0000-0000-0000000000a5'), true);
+select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
+select ok(public.like_dock(current_setting('test.e_dock')::uuid) is not null, 'A likes E''s dock on a song already liked via the sample');
+reset role;
+select is((select count(*) from public.likes where user_id = '00000000-0000-0000-0000-0000000000a1' and song_id = '00000000-0000-0000-0000-0000000000b2'), 1::bigint, 'still one like for s2');
+select is((select count(*) from public.traces where holder_id = '00000000-0000-0000-0000-0000000000a1' and target_id = '00000000-0000-0000-0000-0000000000a5'), 1::bigint, 'the trace to E exists');
+select is((select count(*) from public.kept_notices where owner_id = '00000000-0000-0000-0000-0000000000a5'), 1::bigint, 'E gets exactly one kept notice');
+select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
+select lives_ok($$select public.like_dock(current_setting('test.e_dock')::uuid)$$, 'A likes E''s dock again');
+reset role;
+select is((select count(*) from public.kept_notices where owner_id = '00000000-0000-0000-0000-0000000000a5'), 1::bigint, 'a repeat like keeps E at one kept notice');
+select is((select count(*) from public.visits where kind = 'like' and song_id = '00000000-0000-0000-0000-0000000000b2'), 1::bigint, 'the s2 like visit was recorded once');
+
+-- inactive song
+select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
+select throws_ok($$select public.like_dock('00000000-0000-0000-0000-0000000000d6')$$, 'P0001', 'inactive_song', 'like_dock on a dock whose song is inactive raises inactive_song');
+
 -- find_trace
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
@@ -113,6 +139,16 @@ reset role;
 select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
 select is(public.find_trace(current_setting('test.trace_ab')::uuid), '00000000-0000-0000-0000-0000000000b3'::uuid, 'find_trace follows B to the new dock song');
 select throws_ok($$select public.find_trace('00000000-0000-0000-0000-0000000000f9')$$, 'P0001', 'bad_trace', 'find_trace on a missing trace raises bad_trace');
+select throws_ok($$select public.like_dock(current_setting('test.b_dock')::uuid)$$, 'P0001', 'unknown_dock', 'B''s old dock id is gone after B moves to another song');
+select isnt((select id from public.public_docks where song_id = '00000000-0000-0000-0000-0000000000b3'), current_setting('test.b_dock')::uuid, 'B''s public dock has a new id');
+reset role;
+select set_config('test.b_dock2', (select id::text from public.docks where user_id = '00000000-0000-0000-0000-0000000000a2'), true);
+select pg_temp.login('00000000-0000-0000-0000-0000000000a2');
+select is(public.set_dock('00000000-0000-0000-0000-0000000000b3'), current_setting('test.b_dock2')::uuid, 'set_dock to the same song keeps the dock id');
+select is(public.set_dock('00000000-0000-0000-0000-0000000000b3'), (select id from public.public_docks where song_id = '00000000-0000-0000-0000-0000000000b3'), 'set_dock returns the id shown in public_docks');
+reset role;
+select is((select count(*) from public.docks where user_id = '00000000-0000-0000-0000-0000000000a2'), 1::bigint, 'B still has one dock');
+select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-0000000000a2');
 select throws_ok($$select public.find_trace(current_setting('test.trace_ab')::uuid)$$, 'P0001', 'bad_trace', 'B cannot find_trace on A''s trace');
@@ -188,6 +224,14 @@ reset role;
 select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
 select is_empty($$select 1 from public.my_traces where id = '00000000-0000-0000-0000-0000000000e1'$$, 'a trace below 0.1 is hidden');
 select is((select count(*) from public.my_traces where id = '00000000-0000-0000-0000-0000000000e2'), 1::bigint, 'a trace at 0.1 is still shown');
+reset role;
+insert into public.traces (id, holder_id, target_id, origin_song_id, last_exchange_at, brightness) values
+  ('00000000-0000-0000-0000-0000000000e3', '00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000b1', now() - interval '24 days', 0.09);
+insert into public.suggestions (id, trace_id, from_id, to_id, song_id) values
+  ('00000000-0000-0000-0000-0000000000e4', '00000000-0000-0000-0000-0000000000e3', '00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000b1');
+select pg_temp.login('00000000-0000-0000-0000-0000000000a1');
+select is((select count(*) from public.my_inbox where id = '00000000-0000-0000-0000-0000000000e4'), 1::bigint, 'the suggestion from C is in A''s inbox');
+select is((select reply_trace_id from public.my_inbox where id = '00000000-0000-0000-0000-0000000000e4'), null, 'a faded trace is never offered as reply_trace_id');
 select throws_ok($$select public.find_trace('00000000-0000-0000-0000-0000000000e1')$$, 'P0001', 'trace_faded', 'find_trace on a faded trace raises trace_faded');
 select throws_ok($$select public.send_suggestion('00000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000b4')$$, 'P0001', 'trace_faded', 'send_suggestion on a faded trace raises trace_faded');
 
