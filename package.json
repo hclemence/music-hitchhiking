@@ -8,12 +8,14 @@
     "db:start": "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io supabase start -x studio,imgproxy,storage-api,logflare,vector,supavisor,mailpit,realtime,postgres-meta",
     "db:reset": "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io supabase db reset",
     "test:db": "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io supabase test db",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "packageManager": "pnpm@10.28.0",
   "devDependencies": {
     "@supabase/supabase-js": "^2.118.0",
+    "@types/node": "^22.20.5",
     "supabase": "^3.0.0",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }
