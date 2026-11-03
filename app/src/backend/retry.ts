@@ -5,7 +5,8 @@ export type QueuedAction =
   | { id: string; kind: 'like'; dockId: string }
   | { id: string; kind: 'markInboxSeen' };
 
-export type QueueListener = (online: boolean, error?: BackendError) => void;
+/** `action` is the dropped action when `error` is set. */
+export type QueueListener = (online: boolean, error?: BackendError, action?: QueuedAction) => void;
 
 export interface ActionQueue {
   enqueue(a: QueuedAction): void;
@@ -13,6 +14,8 @@ export interface ActionQueue {
   /** Called when `online` changes, and with `(online, error)` when an action is dropped for a non-network error. */
   subscribe(fn: QueueListener): () => void;
   flush(): Promise<void>;
+  /** Stops timers and notifications; unsent actions stay in storage for the next queue. */
+  dispose(): void;
 }
 
 const KEY = 'mh.queue';
@@ -53,9 +56,11 @@ export function createActionQueue(opts: {
   let attempt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let running: Promise<void> | null = null;
+  let disposed = false;
   const listeners = new Set<QueueListener>();
-  const emit = (online: boolean, error?: BackendError): void => {
-    for (const fn of [...listeners]) fn(online, error);
+  const emit = (online: boolean, error?: BackendError, action?: QueuedAction): void => {
+    if (disposed) return;
+    for (const fn of [...listeners]) fn(online, error, action);
   };
   const setOnline = (v: boolean): void => {
     if (v === isOnline) return;
@@ -64,7 +69,7 @@ export function createActionQueue(opts: {
   };
 
   async function drain(): Promise<void> {
-    while (pending.length > 0) {
+    while (pending.length > 0 && !disposed) {
       const head = pending[0];
       try {
         await send(head);
@@ -72,9 +77,10 @@ export function createActionQueue(opts: {
         if (e instanceof BackendError && !RETRYABLE_CODES.has(e.code)) {
           pending = pending.filter((a) => a.id !== head.id);
           save();
-          emit(isOnline, e);
+          emit(isOnline, e, head);
           continue;
         }
+        if (disposed) return;
         setOnline(false);
         const delay = delays[Math.min(attempt, delays.length - 1)];
         attempt += 1;
@@ -91,6 +97,7 @@ export function createActionQueue(opts: {
 
   function flush(): Promise<void> {
     if (timer) { clearTimeout(timer); timer = null; }
+    if (disposed) return Promise.resolve();
     if (!running) {
       running = drain().finally(() => { running = null; });
     }
@@ -101,6 +108,7 @@ export function createActionQueue(opts: {
 
   return {
     enqueue(a) {
+      if (disposed) return;
       pending = [...pending, a];
       save();
       if (!timer) void flush();
@@ -111,5 +119,10 @@ export function createActionQueue(opts: {
       return () => { listeners.delete(fn); };
     },
     flush,
+    dispose() {
+      disposed = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      listeners.clear();
+    },
   };
 }

@@ -100,6 +100,40 @@ describe('action queue', () => {
     expect(q.online()).toBe(true);
   });
 
+  it('reports which action was dropped', async () => {
+    const send = vi.fn<(a: QueuedAction) => Promise<void>>().mockRejectedValueOnce(new BackendError('own_dock'));
+    const q = createActionQueue({ send, storage: memoryStorage(), delays: [10] });
+    const dropped: (QueuedAction | undefined)[] = [];
+    q.subscribe((_o, e, a) => { if (e) dropped.push(a); });
+    q.enqueue(like);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(dropped).toEqual([like]);
+  });
+
+  it('dispose stops retries and notifications but keeps the action stored', async () => {
+    const storage = memoryStorage();
+    const send = vi.fn<(a: QueuedAction) => Promise<void>>().mockRejectedValue(new BackendError('network'));
+    const q = createActionQueue({ send, storage, delays: [10] });
+    const fn = vi.fn();
+    q.subscribe(fn);
+    q.enqueue(like);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(1);
+    fn.mockClear();
+    q.dispose();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(fn).not.toHaveBeenCalled();
+    q.enqueue({ id: 'a2', kind: 'markInboxSeen' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(send).toHaveBeenCalledTimes(1);
+    // A new queue over the same storage picks the action up.
+    const send2 = vi.fn<(a: QueuedAction) => Promise<void>>().mockResolvedValue(undefined);
+    createActionQueue({ send: send2, storage, delays: [10] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send2).toHaveBeenCalledWith(like);
+  });
+
   it('unsubscribe stops notifications', async () => {
     const send = vi.fn<(a: QueuedAction) => Promise<void>>().mockRejectedValueOnce(new BackendError('network')).mockResolvedValue(undefined);
     const q = createActionQueue({ send, storage: memoryStorage(), delays: [10] });

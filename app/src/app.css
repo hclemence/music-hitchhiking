@@ -273,3 +273,5 @@ button.big { width: 100%; min-height: 52px; font-size: 17px; }
 }
 .r-title { font-weight: 700; }
 .r-artist { color: var(--muted); font-weight: 400; font-size: 13px; }
+.sheet-backdrop.overlay { z-index: 30; }
+.screen-sheet { min-height: 60dvh; max-height: calc(100dvh - 48px); overflow-y: auto; }

@@ -1,7 +1,7 @@
 import './app.css';
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import type { Backend, SampleMap } from './backend/types.ts';
-import { Explore, type Screen } from './ui/Explore.tsx';
+import { Shell } from './ui/Shell.tsx';
 import { NoWebGL, supportsWebGL2 } from './ui/NoWebGL.tsx';
 
 const SceneHarness = import.meta.env.DEV
@@ -54,7 +54,6 @@ export function App() {
 function Main() {
   const [backend, setBackend] = useState<Backend | null>(null);
   const [gate, setGate] = useState<Gate>('loading');
-  const [screen, setScreen] = useState<Screen>('explore');
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const boot = useCallback(async () => {
@@ -97,15 +96,8 @@ function Main() {
     );
   }
   if (gate === 'demoHome') return <DemoHome backend={backend} onDone={() => setGate('ready')} />;
-  if (screen !== 'explore') {
-    return (
-      <main className="center-screen">
-        <p>The {screen} screen is coming soon.</p>
-        <button type="button" className="primary" onClick={() => setScreen('explore')}>Back to the map</button>
-      </main>
-    );
-  }
-  return <Explore backend={backend} tz={tz} onNavigate={setScreen} />;
+  // 'ready' is final, so Explore is never unmounted once shown; other screens open over it.
+  return <Shell backend={backend} tz={tz} />;
 }
 
 function DemoHome({ backend, onDone }: { backend: Backend; onDone: () => void }) {

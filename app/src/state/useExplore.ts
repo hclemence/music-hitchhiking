@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { findEncounters } from '@core/encounters.ts';
 import { seededRng } from '@core/rng.ts';
 import type { Encounter, PublicDock } from '@core/types.ts';
-import { createActionQueue } from '../backend/retry.ts';
+import { createActionQueue, type ActionQueue } from '../backend/retry.ts';
 import {
   BackendError, type Backend, type Hop, type Journey, type Profile, type Region, type Song,
 } from '../backend/types.ts';
@@ -23,6 +23,7 @@ const TOAST_MS = 4000;
 const codeOf = (e: unknown): string => (e instanceof BackendError ? e.code : 'other');
 const uuid = (): string => globalThis.crypto.randomUUID();
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const retryDelay = (attempt: number) => RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)]!;
 
 function defaultStorage(): Storage | null {
   try { return globalThis.localStorage ?? null; } catch { return null; }
@@ -55,6 +56,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
   const [encounters, setEncounters] = useState<ShownEncounter[]>([]);
   const [hopOffline, setHopOffline] = useState(false);
   const [queueOffline, setQueueOffline] = useState(false);
+  const [songOffline, setSongOffline] = useState(false);
   const [liked, setLiked] = useState<ReadonlySet<string>>(new Set());
   const [flight, setFlight] = useState<FlightState | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -81,19 +83,40 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     setTimeout(() => { if (alive.current) setToast((t) => (t === msg ? null : t)); }, TOAST_MS);
   }, []);
 
-  const queue = useMemo(() => createActionQueue({
-    storage: opts.storage ?? defaultStorage() ?? memoryStorage(),
-    send: async (a) => {
-      if (a.kind === 'like') await backend.likeDock(a.dockId);
-      else await backend.markInboxSeen();
-    },
-  }), [backend]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => queue.subscribe((online, error) => {
-    if (!alive.current) return;
-    setQueueOffline(!online);
-    if (error) showToast("Couldn't keep that song");
-  }), [queue, showToast]);
+  // One queue per mounted screen, disposed on unmount. Created a tick after mount so React's
+  // StrictMode mount/unmount/mount in development never makes two queues over the same storage.
+  const queue = useRef<ActionQueue | null>(null);
+  const storageOpt = opts.storage;
+  useEffect(() => {
+    let q: ActionQueue | null = null;
+    let unsubscribe = () => {};
+    const t = setTimeout(() => {
+      q = createActionQueue({
+        storage: storageOpt ?? defaultStorage() ?? memoryStorage(),
+        send: async (a) => {
+          if (a.kind === 'like') await backend.likeDock(a.dockId);
+          else await backend.markInboxSeen();
+        },
+      });
+      queue.current = q;
+      unsubscribe = q.subscribe((online, error, action) => {
+        if (!alive.current) return;
+        setQueueOffline(!online);
+        if (!error) return;
+        if (action?.kind === 'like') {
+          const dockId = action.dockId;
+          setLiked((prev) => { const next = new Set(prev); next.delete(dockId); return next; });
+        }
+        showToast("Couldn't keep that song");
+      });
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      unsubscribe();
+      q?.dispose();
+      if (queue.current === q) queue.current = null;
+    };
+  }, [backend, storageOpt, showToast]);
 
   const loadJourney = useCallback((j: Journey) => {
     epoch.current++;
@@ -149,15 +172,37 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
   const current = hop ? songs.get(hop.songId) ?? null : null;
   const pending = journey.pending !== null;
 
-  // Fetch the current song when it is not one of the map's stars.
+  // Fetch the current song when it is not one of the map's stars; retry while offline.
+  const missingSongId = map && hop && !songs.has(hop.songId) ? hop.songId : null;
   useEffect(() => {
-    if (!map || !hop || songs.has(hop.songId)) return;
-    const id = hop.songId;
-    backend.getSongs([id]).then((found) => {
-      if (!alive.current || found.length === 0) return;
-      setExtraSongs((prev) => new Map([...prev, ...found.map((s) => [s.id, s] as const)]));
-    }).catch(() => {});
-  }, [backend, map, hop?.songId, songs]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!missingSongId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    const tryFetch = () => {
+      backend.getSongs([missingSongId]).then((found) => {
+        if (cancelled || !alive.current) return;
+        setSongOffline(false);
+        if (found.length > 0) setExtraSongs((prev) => new Map([...prev, ...found.map((s) => [s.id, s] as const)]));
+        else showToast("Couldn't find where you are");
+      }).catch((e) => {
+        if (cancelled || !alive.current) return;
+        if (!RETRYABLE.has(codeOf(e))) {
+          setSongOffline(false);
+          showToast("Couldn't find where you are");
+          return;
+        }
+        setSongOffline(true);
+        timer = setTimeout(tryFetch, retryDelay(attempt++));
+      });
+    };
+    tryFetch();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setSongOffline(false);
+    };
+  }, [backend, missingSongId, showToast]);
 
   // Encounters for the current hop, once per (hop, wait) pair.
   useEffect(() => {
@@ -208,20 +253,43 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
         const { [tempId]: c, ...rest } = w;
         return { ...rest, [h.id]: c! };
       });
+      epoch.current++; // a reload that started before this cannot know the hop
       dispatch({ type: 'hopConfirmed', tempId, hop: h });
     };
     const fail = (msg: string) => {
+      epoch.current++;
       dispatch({ type: 'hopFailed', tempId });
       setFlight(null);
       showToast(msg);
     };
 
     let recovered = false;
+    let restart = false;
     let attempt = 0;
     try {
       for (;;) {
         if (!alive.current) return;
         try {
+          if (restart) {
+            // bad_hop: today's journey is not the one we hold (the day changed). Start it here.
+            let j: Journey | null;
+            try {
+              j = await backend.startJourney(tz, from.songId);
+            } catch (e2) {
+              if (codeOf(e2) !== 'journey_exists') throw e2;
+              j = await backend.currentJourney(tz);
+            }
+            if (!j) throw new BackendError('bad_hop');
+            dispatch({ type: 'hopFailed', tempId });
+            loadJourney(j);
+            known = new Set(j.hops.map((h) => h.id));
+            tempId = uuid();
+            parent = j.currentHopId;
+            begin();
+            restart = false;
+            attempt = 0;
+            continue;
+          }
           if (attempt > 0) {
             // The last request may have reached the server: use that hop rather than make a second one.
             const j = await backend.currentJourney(tz);
@@ -233,27 +301,14 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
           break;
         } catch (e) {
           const code = codeOf(e);
-          if (code === 'bad_hop' && !recovered && attempt === 0) {
+          if (code === 'bad_hop' && !recovered) {
             recovered = true;
-            let j: Journey | null;
-            try {
-              j = await backend.startJourney(tz, from.songId);
-            } catch (e2) {
-              if (codeOf(e2) !== 'journey_exists') throw e2;
-              j = await backend.currentJourney(tz);
-            }
-            if (!j) throw e;
-            dispatch({ type: 'hopFailed', tempId });
-            loadJourney(j);
-            known = new Set(j.hops.map((h) => h.id));
-            tempId = uuid();
-            parent = j.currentHopId;
-            begin();
+            restart = true;
             continue;
           }
           if (!RETRYABLE.has(code)) throw e;
           setHopOffline(true);
-          await sleep(RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)]!);
+          await sleep(retryDelay(attempt));
           attempt++;
         }
       }
@@ -264,6 +319,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
       fail(kind === 'jump' ? "Couldn't jump there" : "Couldn't hitchhike there");
     } finally {
       hopRunning.current = false;
+      epoch.current++;
     }
   }, [backend, tz, songs, showToast, loadJourney]);
 
@@ -291,7 +347,8 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     if (!s.journey.hops.some((h) => h.id === hopId)) return;
     epoch.current++;
     dispatch({ type: 'movedTo', hopId });
-    backend.moveTo(tz, hopId).catch(async (e) => {
+    backend.moveTo(tz, hopId).then(() => { epoch.current++; }, async (e) => {
+      epoch.current++; // a reload that started before the move settled may hold the old position
       // Offline is harmless: the next hop names its parent. Otherwise re-sync with the server.
       if (RETRYABLE.has(codeOf(e)) || !alive.current) return;
       showToast("Couldn't move there");
@@ -308,7 +365,9 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     like: (e: Encounter) => {
       if (liked.has(e.dock.id)) return;
       setLiked((prev) => new Set(prev).add(e.dock.id));
-      queue.enqueue({ id: uuid(), kind: 'like', dockId: e.dock.id });
+      const action = { id: uuid(), kind: 'like' as const, dockId: e.dock.id };
+      if (queue.current) queue.current.enqueue(action);
+      else void backend.likeDock(action.dockId).catch(() => {}); // only in the first tick after mount
     },
     wait: () => {
       const h = currentHop(stateRef.current);
@@ -319,7 +378,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     startAt: (songId: string) => void startAt(songId),
     endFlight: () => setFlight(null),
     retryLoad: () => { setLoadState('loading'); void reload(); },
-  }), [performHop, profile, liked, queue, moveTo, startAt, reload]);
+  }), [backend, performHop, profile, liked, moveTo, startAt, reload]);
 
   let status: ExploreStatus;
   if (loadState !== 'done') status = loadState;
@@ -343,7 +402,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     current,
     songs,
     encounters,
-    offline: hopOffline || queueOffline,
+    offline: hopOffline || queueOffline || songOffline,
     pending,
     flight,
     liked,

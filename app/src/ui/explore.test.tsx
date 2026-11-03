@@ -5,7 +5,16 @@ import sampleMapJson from '../../../data/sample-map.json';
 import type { SampleMap } from '../../../scripts/sample-map.ts';
 import { createDemoBackend } from '../backend/demo.ts';
 import { BackendError, type Backend } from '../backend/types.ts';
+import { createActionQueue } from '../backend/retry.ts';
 import { Explore, type Screen } from './Explore.tsx';
+import { Shell } from './Shell.tsx';
+
+const scene = vi.hoisted(() => ({ props: null as null | { stars: { id: string }[]; currentSongId: string } }));
+
+vi.mock('../backend/retry.ts', async (importOriginal) => {
+  const m = await importOriginal<typeof import('../backend/retry.ts')>();
+  return { ...m, createActionQueue: vi.fn(m.createActionQueue) };
+});
 
 // WebGL is unavailable in jsdom: a stub that renders the encounter ships as buttons and
 // lands every flight immediately.
@@ -19,7 +28,8 @@ vi.mock('../map/MapScene.tsx', async () => {
     onShipTap?: (id: string) => void;
     onFlightEnd?: () => void;
   };
-  function MapScene(p: P) {
+  function MapScene(p: P & { stars: { id: string }[] }) {
+    scene.props = p;
     useEffect(() => { if (p.flight) p.onFlightEnd?.(); }, [p.flight]);
     return (
       <div data-testid="map" data-current={p.currentSongId}>
@@ -54,6 +64,8 @@ beforeEach(() => {
   storage = new MemoryStorage();
   localStorage.clear();
   onNavigate = vi.fn();
+  scene.props = null;
+  vi.mocked(createActionQueue).mockClear();
 });
 afterEach(() => {
   cleanup();
@@ -382,5 +394,219 @@ describe('Explore path exclusion', () => {
     await check();
     await user.click(screen.getByRole('button', { name: 'Home' }));
     await check();
+  });
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+const becomeVisible = () => act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+
+describe('Explore review fixes', () => {
+  it('a reload that started mid-hop and lands after the confirm does not drop the hop', async () => {
+    const base = demo();
+    let loadGate: Promise<void> | null = null;
+    let hopGate: Promise<void> | null = null;
+    const backend: Backend = {
+      ...base,
+      async loadMap() { if (loadGate) await loadGate; return base.loadMap(); },
+      async hop(...a) { if (hopGate) await hopGate; return base.hop(...a); },
+    };
+    await open(backend);
+    const [first] = await findCards();
+    const title = titleOf(first!);
+    const hopD = deferred();
+    hopGate = hopD.promise;
+    fireEvent.click(within(first!).getByRole('button', { name: 'Hitchhike' }));
+    const loadD = deferred();
+    loadGate = loadD.promise;
+    await becomeVisible(); // reload starts now: currentJourney answers without the new hop
+    await act(async () => { hopD.resolve(); await hopD.promise; });
+    expect(nodeCount()).toBe(2);
+    await act(async () => { loadD.resolve(); await loadD.promise; await new Promise((r) => setTimeout(r, 0)); });
+    expect(nodeCount()).toBe(2);
+    expect(here()).toHaveTextContent(title);
+  });
+
+  it('a reload that started before a move settled does not undo the move', async () => {
+    const base = demo();
+    let loadGate: Promise<void> | null = null;
+    let moveGate: Promise<void> | null = null;
+    const backend: Backend = {
+      ...base,
+      async loadMap() { if (loadGate) await loadGate; return base.loadMap(); },
+      async moveTo(...a) { if (moveGate) await moveGate; return base.moveTo(...a); },
+    };
+    await open(backend);
+    const user = userEvent.setup();
+    const [first] = await findCards();
+    await user.click(within(first!).getByRole('button', { name: 'Hitchhike' }));
+    const moveD = deferred();
+    moveGate = moveD.promise;
+    await user.click(miniMap());
+    await user.click(screen.getByRole('button', { name: `Go back to ${HOME.title} by ${HOME.artist}` }));
+    const loadD = deferred();
+    loadGate = loadD.promise;
+    await becomeVisible();
+    await act(async () => { moveD.resolve(); await moveD.promise; await new Promise((r) => setTimeout(r, 0)); });
+    await act(async () => { loadD.resolve(); await loadD.promise; await new Promise((r) => setTimeout(r, 0)); });
+    expect(here()).toHaveTextContent(HOME.title);
+  });
+
+  it('fetches a current song that is not a star and gives it to the map', async () => {
+    const base = demo();
+    const asked: string[][] = [];
+    const backend: Backend = {
+      ...base,
+      async loadMap() {
+        const m = await base.loadMap();
+        return { ...m, stars: m.stars.filter((s) => s.id !== HOME.id) };
+      },
+      async getSongs(ids) { asked.push(ids); return base.getSongs(ids); },
+    };
+    await open(backend);
+    expect(await findCards()).toHaveLength(3);
+    expect(asked).toEqual([[HOME.id]]);
+    expect(here()).toHaveTextContent(HOME.title);
+    expect(scene.props!.currentSongId).toBe(HOME.id);
+    expect(scene.props!.stars.some((s) => s.id === HOME.id)).toBe(true);
+  });
+
+  it('retries fetching the current song while offline', async () => {
+    const base = demo();
+    let fails = 1;
+    const backend: Backend = {
+      ...base,
+      async loadMap() {
+        const m = await base.loadMap();
+        return { ...m, stars: m.stars.filter((s) => s.id !== HOME.id) };
+      },
+      async getSongs(ids) {
+        if (fails-- > 0) throw new BackendError('network');
+        return base.getSongs(ids);
+      },
+    };
+    await open(backend);
+    expect(await screen.findByRole('status')).toHaveTextContent(/offline/i);
+    expect(await screen.findAllByRole('article', {}, { timeout: 3000 })).toHaveLength(3);
+    expect(here()).toHaveTextContent(HOME.title);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('recovers from bad_hop on a later attempt (offline across the day change)', async () => {
+    const base = demo();
+    let calls = 0;
+    const backend: Backend = {
+      ...base,
+      async hop(...a) {
+        calls++;
+        if (calls === 1) throw new BackendError('network');
+        if (calls === 2) { storage.removeItem('mh.demo.journeys'); throw new BackendError('bad_hop'); }
+        return base.hop(...a);
+      },
+    };
+    await open(backend);
+    const [first] = await findCards();
+    const title = titleOf(first!);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    fireEvent.click(within(first!).getByRole('button', { name: 'Hitchhike' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(here()).toHaveTextContent(title);
+    const j = (await backend.currentJourney(TZ))!;
+    expect(j.hops.map((h) => h.kind)).toEqual(['start', 'hitchhike']);
+    expect(nodeCount()).toBe(2);
+  });
+
+  it('a network error while recovering from bad_hop goes offline and retries', async () => {
+    const base = demo();
+    let tripped = false;
+    let startFails = 0;
+    const backend: Backend = {
+      ...base,
+      async hop(...a) {
+        if (!tripped) { tripped = true; storage.removeItem('mh.demo.journeys'); throw new BackendError('bad_hop'); }
+        return base.hop(...a);
+      },
+      async startJourney(tz, songId) {
+        if (startFails-- > 0) throw new BackendError('network');
+        return base.startJourney(tz, songId);
+      },
+    };
+    await open(backend);
+    const [first] = await findCards();
+    const title = titleOf(first!);
+    startFails = 1;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    fireEvent.click(within(first!).getByRole('button', { name: 'Hitchhike' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByRole('status')).toHaveTextContent(/offline/i);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(here()).toHaveTextContent(title);
+    expect((await backend.currentJourney(TZ))!.hops).toHaveLength(2);
+  });
+
+  it('a like the server rejects is no longer shown as Kept', async () => {
+    const base = demo();
+    const backend: Backend = { ...base, likeDock: async () => { throw new BackendError('unknown_dock'); } };
+    await open(backend);
+    const [first] = await findCards();
+    await userEvent.click(within(first!).getByRole('button', { name: 'Like' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't keep/i);
+    expect(within(first!).getByRole('button', { name: 'Like' })).toBeEnabled();
+  });
+
+  it('disposes its action queue on unmount', async () => {
+    const backend = demo();
+    await backend.setHome(HOME.id);
+    await backend.startJourney(TZ, HOME.id);
+    const { unmount } = render(<Explore backend={backend} tz={TZ} onNavigate={onNavigate} />);
+    await findCards();
+    expect(createActionQueue).toHaveBeenCalledTimes(1);
+    const q = vi.mocked(createActionQueue).mock.results[0]!.value as ReturnType<typeof createActionQueue>;
+    const dispose = vi.spyOn(q, 'dispose');
+    unmount();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Shell', () => {
+  it('Ship opens over the map; a pending offline hop survives and confirms later; one queue only', async () => {
+    const base = demo();
+    let offline = false;
+    const net = () => { if (offline) throw new BackendError('network'); };
+    const backend: Backend = {
+      ...base,
+      async hop(...a) { net(); return base.hop(...a); },
+      async currentJourney(tz) { net(); return base.currentJourney(tz); },
+    };
+    await backend.setHome(HOME.id);
+    await backend.startJourney(TZ, HOME.id);
+    render(<Shell backend={backend} tz={TZ} />);
+    const [first] = await findCards();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    offline = true;
+    fireEvent.click(within(first!).getByRole('button', { name: 'Hitchhike' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.click(screen.getByRole('button', { name: 'Ship' }));
+    const sheet = screen.getByRole('dialog', { name: 'Ship' });
+    expect(screen.getByLabelText('You are here')).toBeInTheDocument(); // the map stays underneath
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/offline/i);
+    expect(nodeCount()).toBe(2);
+    offline = false;
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect((await backend.currentJourney(TZ))!.hops).toHaveLength(2);
+    expect(nodeCount()).toBe(2);
+    expect(createActionQueue).toHaveBeenCalledTimes(1);
   });
 });

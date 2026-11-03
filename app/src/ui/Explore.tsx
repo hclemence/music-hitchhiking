@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Backend, Song } from '../backend/types.ts';
 import { MapScene } from '../map/MapScene.tsx';
 import { useExplore, type ExploreModel } from '../state/useExplore.ts';
@@ -65,12 +65,17 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
   const map = x.map!;
   const current = x.current;
   const encounterSongIds = x.encounters.map((e) => e.songId);
+  // The current song may not be one of the map's stars (Review Focus 3): add it so the camera and ship go there.
+  const stars = useMemo(
+    () => (current && !map.stars.some((s) => s.id === current.id) ? [...map.stars, current] : map.stars),
+    [map.stars, current],
+  );
 
   return (
     <>
       {current && (
         <MapScene
-          stars={map.stars}
+          stars={stars}
           regions={map.regions}
           docks={map.docks}
           colourSeed={x.profile!.colourSeed}
