@@ -14,7 +14,10 @@
     "test:db:sandbox": "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io supabase test db",
     "functions:serve:sandbox": "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io supabase functions serve",
     "seed:sample": "tsx scripts/seed-sample.ts",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "app:dev": "pnpm --filter app dev",
+    "app:test": "pnpm --filter app test",
+    "app:build": "pnpm --filter app build"
   },
   "packageManager": "pnpm@10.28.0",
   "devDependencies": {
