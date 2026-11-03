@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { Backend } from '../backend/types.ts';
 import { Explore, type Screen } from './Explore.tsx';
+import { ShipPicker } from './ShipPicker.tsx';
+import { DockSearch } from './DockSearch.tsx';
 
 const TITLES: Record<Exclude<Screen, 'explore'>, string> = {
   ship: 'Ship', dock: 'Dock', history: 'History', inbox: 'Inbox',
@@ -12,13 +14,18 @@ const TITLES: Record<Exclude<Screen, 'explore'>, string> = {
  */
 export function Shell({ backend, tz }: { backend: Backend; tz: string }) {
   const [screen, setScreen] = useState<Screen>('explore');
+  const [reloadToken, setReloadToken] = useState(0);
+  const done = () => { setReloadToken((n) => n + 1); setScreen('explore'); };
   return (
     <>
-      <Explore backend={backend} tz={tz} onNavigate={setScreen} />
+      <Explore backend={backend} tz={tz} onNavigate={setScreen} reloadToken={reloadToken} />
       {screen !== 'explore' && (
         <ScreenSheet title={TITLES[screen]} onClose={() => setScreen('explore')}>
-          {/* Placeholder: Task 8 brings the real screens. */}
-          <p className="hint">The {TITLES[screen].toLowerCase()} screen is coming soon.</p>
+          {screen === 'ship' && <ShipPicker backend={backend} onDone={done} />}
+          {screen === 'dock' && <DockSearch backend={backend} onDone={done} />}
+          {(screen === 'history' || screen === 'inbox') && (
+            <p className="hint">The {TITLES[screen].toLowerCase()} screen is coming soon.</p>
+          )}
         </ScreenSheet>
       )}
     </>

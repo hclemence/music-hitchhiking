@@ -43,6 +43,8 @@ vi.mock('../map/MapScene.tsx', async () => {
   return { MapScene };
 });
 
+vi.mock('../map/ShipPreview.tsx', () => ({ ShipPreview: () => null }));
+
 class MemoryStorage implements Storage {
   private m = new Map<string, string>();
   get length() { return this.m.size; }
@@ -608,5 +610,21 @@ describe('Shell', () => {
     expect((await backend.currentJourney(TZ))!.hops).toHaveLength(2);
     expect(nodeCount()).toBe(2);
     expect(createActionQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('Dock saves over the map, closes the sheet and Explore loads the new dock', async () => {
+    const user = userEvent.setup();
+    const backend = demo();
+    await backend.setHome(HOME.id);
+    await backend.startJourney(TZ, HOME.id);
+    render(<Shell backend={backend} tz={TZ} />);
+    await findCards();
+    const target = sample.songs[5]!;
+    await user.click(screen.getByRole('button', { name: 'Dock' }));
+    const sheet = screen.getByRole('dialog', { name: 'Dock' });
+    await user.type(within(sheet).getByRole('searchbox'), target.title.slice(0, 6));
+    await user.click(await within(sheet).findByRole('button', { name: new RegExp(target.title.slice(0, 6), 'i') }, { timeout: 2000 }));
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect((await backend.getMyDock())!.songId).toBeTruthy();
   });
 });

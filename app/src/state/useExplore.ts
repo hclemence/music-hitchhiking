@@ -44,7 +44,7 @@ function memoryStorage(): Storage {
  * Everything the Explore screen shows and does: the map, today's journey (optimistic hops),
  * the encounters at the current hop, the offline flag and the actions.
  */
-export function useExplore(backend: Backend, tz: string, opts: { storage?: Storage } = {}) {
+export function useExplore(backend: Backend, tz: string, opts: { storage?: Storage; reloadToken?: number } = {}) {
   const [map, setMap] = useState<ExploreMap | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [myDock, setMyDock] = useState<{ id: string; songId: string } | null>(null);
@@ -160,6 +160,15 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
       clearInterval(timer);
     };
   }, [reload]);
+
+  // A screen outside Explore (Ship, Dock) changed something: load it again.
+  const lastToken = useRef(opts.reloadToken ?? 0);
+  useEffect(() => {
+    const t = opts.reloadToken ?? 0;
+    if (t === lastToken.current) return;
+    lastToken.current = t;
+    void reload();
+  }, [opts.reloadToken, reload]);
 
   // Songs by id: the map's stars plus any song fetched separately (Review Focus 3).
   const songs = useMemo(() => {

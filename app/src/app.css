@@ -275,3 +275,29 @@ button.big { width: 100%; min-height: 52px; font-size: 17px; }
 .r-artist { color: var(--muted); font-weight: 400; font-size: 13px; }
 .sheet-backdrop.overlay { z-index: 30; }
 .screen-sheet { min-height: 60dvh; max-height: calc(100dvh - 48px); overflow-y: auto; }
+
+/* ---- Start, Ship and Dock ---- */
+.start p { color: var(--muted); }
+.start-form { display: flex; flex-direction: column; gap: 12px; }
+.start-form label, .check { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
+.start-form input {
+  min-height: 48px; border-radius: 10px; border: 1px solid var(--line); background: var(--card);
+  color: var(--text); font: inherit; font-size: 16px; padding: 0 12px;
+}
+.mono, .recovery-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.start .recovery-code {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px; font-size: 19px; letter-spacing: 0.04em; line-height: 1.6; color: var(--accent);
+  word-spacing: 0.3em; text-align: center; overflow-wrap: anywhere;
+}
+.warn-text { color: var(--warn) !important; font-weight: 600; }
+.error-text { color: var(--error) !important; font-weight: 600; }
+.picker { display: flex; flex-direction: column; gap: 14px; }
+.ship-preview { height: 200px; border-radius: var(--radius); background: var(--card); overflow: hidden; }
+.swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.swatch { width: 100%; aspect-ratio: 1; min-height: var(--tap); border-radius: 50%; border: 3px solid transparent; padding: 0; }
+.swatch[aria-pressed='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg) inset; }
+.check { flex-direction: row; align-items: center; gap: 10px; min-height: var(--tap); font-size: 15px; color: var(--text); }
+.check input { width: 22px; height: 22px; accent-color: var(--accent); }
+.onboard { max-width: 480px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 32px) 20px 20px; display: flex; flex-direction: column; gap: 14px; height: 100%; overflow-y: auto; }
+.onboard h1 { font-size: 24px; }

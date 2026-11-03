@@ -1,7 +1,10 @@
 import './app.css';
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { Backend, SampleMap } from './backend/types.ts';
 import { Shell } from './ui/Shell.tsx';
+import { StartFlow } from './ui/StartFlow.tsx';
+import { ShipPicker } from './ui/ShipPicker.tsx';
+import { DockSearch } from './ui/DockSearch.tsx';
 import { NoWebGL, supportsWebGL2 } from './ui/NoWebGL.tsx';
 
 const SceneHarness = import.meta.env.DEV
@@ -41,7 +44,7 @@ async function createBackend(): Promise<Backend> {
   return createSupabaseBackend(createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY), storage);
 }
 
-type Gate = 'loading' | 'error' | 'start' | 'demoHome' | 'ready';
+type Gate = 'loading' | 'error' | 'start' | 'onboardShip' | 'onboardDock' | 'ready';
 
 export function App() {
   if (!supportsWebGL2()) return <NoWebGL />;
@@ -56,7 +59,12 @@ function Main() {
   const [gate, setGate] = useState<Gate>('loading');
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+  // StrictMode runs effects twice: one boot at a time, so the backend is never swapped
+  // under a mounted Explore.
+  const booting = useRef(false);
   const boot = useCallback(async () => {
+    if (booting.current) return;
+    booting.current = true;
     setGate('loading');
     try {
       const b = await createBackend();
@@ -66,10 +74,12 @@ function Main() {
         setGate(session?.isMember ? 'ready' : 'start');
       } else {
         const p = await b.getProfile();
-        setGate(p.homeSongId ? 'ready' : 'demoHome');
+        setGate(p.homeSongId ? 'ready' : 'onboardShip');
       }
     } catch {
       setGate('error');
+    } finally {
+      booting.current = false;
     }
   }, []);
   useEffect(() => { void boot(); }, [boot]);
@@ -85,42 +95,26 @@ function Main() {
       </main>
     );
   }
-  // Placeholders below are replaced by the onboarding and settings screens (Task 8).
   if (gate === 'start') {
+    return <StartFlow backend={backend} onDone={(kind) => setGate(kind === 'new' ? 'onboardShip' : 'ready')} />;
+  }
+  if (gate === 'onboardShip') {
     return (
-      <main className="center-screen">
-        <h1>Music Hitchhiking</h1>
-        <p>Start with an invite code.</p>
-        <button type="button" className="primary" disabled>Start</button>
+      <main className="onboard">
+        <h1>Choose your ship</h1>
+        <ShipPicker backend={backend} onDone={() => setGate('onboardDock')} />
       </main>
     );
   }
-  if (gate === 'demoHome') return <DemoHome backend={backend} onDone={() => setGate('ready')} />;
+  if (gate === 'onboardDock') {
+    return (
+      <main className="onboard">
+        <h1>Choose your dock</h1>
+        <p className="hint">Pick the song your ship docks at. Others will find you there.</p>
+        <DockSearch backend={backend} onDone={() => setGate('ready')} />
+      </main>
+    );
+  }
   // 'ready' is final, so Explore is never unmounted once shown; other screens open over it.
   return <Shell backend={backend} tz={tz} />;
-}
-
-function DemoHome({ backend, onDone }: { backend: Backend; onDone: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const begin = async () => {
-    setBusy(true);
-    try {
-      const { stars } = await backend.loadMap();
-      const first = stars[0]!.id;
-      await backend.setDock(first);
-      await backend.setHome(first);
-      onDone();
-    } catch {
-      setBusy(false);
-    }
-  };
-  return (
-    <main className="center-screen">
-      <h1>Music Hitchhiking</h1>
-      <p>Songs are stars. Dock your ship at one, then hitchhike with others.</p>
-      <button type="button" className="primary big" onClick={() => void begin()} disabled={busy}>
-        Dock and start exploring
-      </button>
-    </main>
-  );
 }

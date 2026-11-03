@@ -8,12 +8,12 @@ import { OfflineBanner } from './OfflineBanner.tsx';
 
 export type Screen = 'explore' | 'history' | 'inbox' | 'ship' | 'dock';
 
-type Props = { backend: Backend; tz: string; onNavigate: (screen: Screen) => void };
+type Props = { backend: Backend; tz: string; onNavigate: (screen: Screen) => void; reloadToken?: number };
 
 const SEARCH_DEBOUNCE_MS = 250;
 
-export function Explore({ backend, tz, onNavigate }: Props) {
-  const x = useExplore(backend, tz);
+export function Explore({ backend, tz, onNavigate, reloadToken }: Props) {
+  const x = useExplore(backend, tz, { reloadToken });
   const navigated = useRef(false);
   useEffect(() => {
     if (x.status === 'noHome' && !navigated.current) {
