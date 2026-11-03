@@ -374,7 +374,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     hitchhike: (e: Encounter) => void performHop(e.songId, 'hitchhike'),
     jumpTo: (songId: string) => void performHop(songId, 'jump'),
     home: () => { if (profile?.homeSongId) void performHop(profile.homeSongId, 'jump'); },
-    like: (e: Encounter) => {
+    like: (e: { dock: { id: string } }) => {
       if (liked.has(e.dock.id)) return;
       setLiked((prev) => new Set(prev).add(e.dock.id));
       const action = { id: uuid(), kind: 'like' as const, dockId: e.dock.id };
@@ -398,6 +398,16 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
   else if (journeyMissing || !journey.journey) status = 'noJourney';
   else status = 'ready';
 
+  // Other people's docks at the current star, newest first (Ruling 11). Encounters never include
+  // them, so this is how you see the ship you found or flew alongside.
+  const hereDocks = useMemo(() => {
+    if (!map || !current) return [];
+    const ownId = myDock?.id ?? null;
+    return map.docks
+      .filter((d) => d.songId === current.id && d.id !== ownId)
+      .sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
+  }, [map, current, myDock]);
+
   const hops = useMemo(() => {
     const list = journey.journey?.hops ?? [];
     return journey.pending && hop ? [...list, hop] : list;
@@ -414,6 +424,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     current,
     songs,
     encounters,
+    hereDocks,
     offline: hopOffline || queueOffline || songOffline,
     pending,
     flight,

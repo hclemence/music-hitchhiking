@@ -105,14 +105,26 @@ const ay = new THREE.Vector3();
 export const shipScale = (camera: THREE.Camera, at: THREE.Vector3): number =>
   Math.max(0.3, camera.position.distanceTo(at) * SHIP_SCREEN_SCALE);
 
-/** Sets `out` to `at` plus a docked offset (up-right, just beyond the star's glow). */
+/**
+ * Docked offsets around a star in screen axes, as fractions of the camera distance. Slot 0
+ * (up-right) is the only one used at encounter stars and for your own ship; other people's
+ * ships at your current star take the slots after it.
+ */
+const DOCK_SLOTS: readonly (readonly [number, number])[] = [
+  [0.03, 0.024], [-0.03, 0.024], [-0.03, -0.024], [0.03, -0.024], [0.056, 0], [-0.056, 0],
+];
+/** How many other ships fit beside your own at the current star. */
+export const MAX_SHIPS_HERE = DOCK_SLOTS.length - 1;
+
+/** Sets `out` to `at` plus a docked offset (slot 0: up-right, just beyond the star's glow). */
 export function dockedPosition(
-  camera: THREE.Camera, at: THREE.Vector3, scale: number, bob: number, out: THREE.Vector3,
+  camera: THREE.Camera, at: THREE.Vector3, scale: number, bob: number, out: THREE.Vector3, slot = 0,
 ): THREE.Vector3 {
   const unit = scale / SHIP_SCREEN_SCALE; // = camera distance, clamped consistently
+  const [sx, sy] = DOCK_SLOTS[Math.min(Math.max(0, slot), DOCK_SLOTS.length - 1)]!;
   ax.set(1, 0, 0).applyQuaternion(camera.quaternion);
   ay.set(0, 1, 0).applyQuaternion(camera.quaternion);
   return out.copy(at)
-    .addScaledVector(ax, 0.03 * unit)
-    .addScaledVector(ay, 0.024 * unit + bob * scale);
+    .addScaledVector(ax, sx * unit)
+    .addScaledVector(ay, sy * unit + bob * scale);
 }

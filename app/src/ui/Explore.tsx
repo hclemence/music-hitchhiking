@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Backend, Song } from '../backend/types.ts';
+import { EncounterCard } from './EncounterCard.tsx';
 import { MapScene } from '../map/MapScene.tsx';
 import { useExplore, type ExploreModel } from '../state/useExplore.ts';
 import { EncounterBar } from './EncounterBar.tsx';
@@ -70,6 +71,7 @@ export function Explore({ backend, tz, onNavigate, reloadToken, jumpRequest }: P
 
 function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: ExploreModel; onNavigate: Props['onNavigate'] }) {
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
+  const [hereDockId, setHereDockId] = useState<string | null>(null);
   const busy = x.pending || x.flight !== null;
   const homeId = x.profile?.homeSongId ?? null;
   const map = x.map!;
@@ -80,6 +82,13 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
     () => (current && !map.stars.some((s) => s.id === current.id) ? [...map.stars, current] : map.stars),
     [map.stars, current],
   );
+  // A ship docked where you are (Ruling 11): its card has Like and links but no Hitchhike.
+  const currentId = current?.id ?? null;
+  useEffect(() => { setHereDockId(null); }, [currentId]);
+  const hereDock = hereDockId ? x.hereDocks.find((d) => d.id === hereDockId) ?? null : null;
+  const hereCard = hereDock && current
+    ? { songId: current.id, song: current, dock: hereDock, othersCount: 0, distance: 0 }
+    : null;
 
   return (
     <>
@@ -91,12 +100,17 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           colourSeed={x.profile!.colourSeed}
           currentSongId={current.id}
           encounterSongIds={encounterSongIds}
+          hereDocks={x.hereDocks}
           myShipColour={x.profile!.shipColour}
           flight={x.flight}
           onFlightEnd={x.actions.endFlight}
           onShipTap={(dockId) => {
-            const songId = map.docks.find((d) => d.id === dockId)?.songId ?? null;
-            setSelectedSongId(songId);
+            if (x.hereDocks.some((d) => d.id === dockId)) {
+              setHereDockId(dockId);
+              return;
+            }
+            setHereDockId(null);
+            setSelectedSongId(map.docks.find((d) => d.id === dockId)?.songId ?? null);
           }}
         />
       )}
@@ -117,14 +131,28 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
         </div>
       </div>
       <section className="sheet" aria-label="Encounters">
-        <EncounterBar
-          encounters={x.encounters}
-          selectedSongId={selectedSongId}
-          kept={x.liked}
-          disabled={busy}
-          onLike={x.actions.like}
-          onHitchhike={x.actions.hitchhike}
-        />
+        {hereCard ? (
+          <div className="encounters" aria-label="Docked here">
+            <EncounterCard
+              encounter={hereCard}
+              selected
+              kept={x.liked.has(hereCard.dock.id)}
+              disabled={busy}
+              note="Docked here"
+              onLike={() => x.actions.like(hereCard)}
+              onClose={() => setHereDockId(null)}
+            />
+          </div>
+        ) : (
+          <EncounterBar
+            encounters={x.encounters}
+            selectedSongId={selectedSongId}
+            kept={x.liked}
+            disabled={busy}
+            onLike={x.actions.like}
+            onHitchhike={x.actions.hitchhike}
+          />
+        )}
         <nav className="toolbar" aria-label="Actions">
           <button type="button" onClick={x.actions.home} disabled={busy || !homeId || current?.id === homeId}>Home</button>
           <button type="button" onClick={x.actions.wait} disabled={x.flight !== null}>Wait</button>

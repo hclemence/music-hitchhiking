@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { createFocus, createTapGesture, FOCUS_MS, pickNearest } from './controls.ts';
+import { createFocus, createTapGesture, dockedPosition, FOCUS_MS, MAX_SHIPS_HERE, pickNearest } from './controls.ts';
 
 const ptr = (t: number, x = 100, y = 100, over: Partial<{ isPrimary: boolean; pointerId: number }> = {}) =>
   ({ isPrimary: true, pointerId: 1, clientX: x, clientY: y, timeStamp: t, ...over });
@@ -77,5 +77,18 @@ describe('createFocus', () => {
     expect(f.active).toBe(true);
     f.cancel();
     expect(f.step(10, new THREE.Vector3())).toBe(false);
+  });
+});
+
+describe('dockedPosition slots', () => {
+  it('puts ships at the same star in different places; slot 0 is unchanged', () => {
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(0, 0, 100);
+    const at = new THREE.Vector3();
+    const spots = Array.from({ length: MAX_SHIPS_HERE + 1 }, (_, slot) =>
+      dockedPosition(camera, at, 2, 0, new THREE.Vector3(), slot).toArray().map((v) => v.toFixed(3)).join());
+    expect(new Set(spots).size).toBe(MAX_SHIPS_HERE + 1);
+    expect(dockedPosition(camera, at, 2, 0, new THREE.Vector3()).toArray().map((v) => v.toFixed(3)).join())
+      .toBe(spots[0]);
   });
 });

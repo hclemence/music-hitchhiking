@@ -9,7 +9,7 @@ import { Dust, Stars } from './Stars.tsx';
 import { ShipModel } from './ShipModel.tsx';
 import { Flight, type FlightState, type Vec3 } from './Flight.tsx';
 import {
-  createFocus, createTapGesture, dockedPosition, MAX_DISTANCE, MIN_DISTANCE, pickNearest, shipScale,
+  createFocus, createTapGesture, dockedPosition, MAX_DISTANCE, MAX_SHIPS_HERE, MIN_DISTANCE, pickNearest, shipScale,
 } from './controls.ts';
 
 export type { FlightState, Vec3 };
@@ -21,6 +21,8 @@ export type MapSceneProps = {
   colourSeed: string;
   currentSongId: string;
   encounterSongIds: string[];
+  /** Other people's docks at the current star (not your own), newest first: drawn beside it. */
+  hereDocks?: PublicDock[];
   /** Tint for your own ship. */
   myShipColour?: string;
   /** Called after a double-tapped star becomes the camera's focus (the scene focuses either way). */
@@ -36,10 +38,10 @@ const PICK_RADIUS_PX = 32;
 type Controls = React.ComponentRef<typeof OrbitControls>;
 
 function DockedShip({
-  at, colour, translucent, dockId, onTap, phase,
+  at, colour, translucent, dockId, onTap, phase, slot = 0,
 }: {
   at: THREE.Vector3; colour: string; translucent: boolean; dockId?: string;
-  onTap?: (dockId: string) => void; phase: number;
+  onTap?: (dockId: string) => void; phase: number; slot?: number;
 }) {
   const group = useRef<THREE.Group>(null);
   const fwd = useMemo(() => new THREE.Quaternion(), []);
@@ -49,7 +51,7 @@ function DockedShip({
     if (!g) return;
     const s = shipScale(camera, at);
     g.scale.setScalar(s);
-    dockedPosition(camera, at, s, Math.sin(clock.elapsedTime * 1.2 + phase) * 0.18, g.position);
+    dockedPosition(camera, at, s, Math.sin(clock.elapsedTime * 1.2 + phase) * 0.18, g.position, slot);
     g.quaternion.copy(fwd.copy(camera.quaternion).multiply(flip));
   });
   return (
@@ -101,7 +103,7 @@ function TapToFocus({
 
 function Scene(props: MapSceneProps) {
   const {
-    stars, regions, docks, colourSeed, currentSongId, encounterSongIds,
+    stars, regions, docks, colourSeed, currentSongId, encounterSongIds, hereDocks = [],
     myShipColour = '#ffffff', onStarDoubleTap, onShipTap, flight, onFlightEnd,
   } = props;
   const controls = useRef<Controls>(null);
@@ -199,6 +201,12 @@ function Scene(props: MapSceneProps) {
         <DockedShip
           key={dock.id} at={at} colour={dock.shipColour} translucent={dock.isSample}
           dockId={dock.id} onTap={onShipTap} phase={i * 2.1}
+        />
+      ))}
+      {currentPos && hereDocks.slice(0, MAX_SHIPS_HERE).map((dock, i) => (
+        <DockedShip
+          key={`here-${dock.id}`} at={currentPos} colour={dock.shipColour} translucent={dock.isSample}
+          dockId={dock.id} onTap={onShipTap} phase={1.3 + i * 1.7} slot={i + 1}
         />
       ))}
       {flight ? (

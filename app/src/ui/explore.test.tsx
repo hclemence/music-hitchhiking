@@ -9,7 +9,9 @@ import { createActionQueue } from '../backend/retry.ts';
 import { Explore, type Screen } from './Explore.tsx';
 import { Shell } from './Shell.tsx';
 
-const scene = vi.hoisted(() => ({ props: null as null | { stars: { id: string }[]; currentSongId: string } }));
+const scene = vi.hoisted(() => ({
+  props: null as null | { stars: { id: string }[]; currentSongId: string; hereDocks?: { id: string; songId: string }[] },
+}));
 
 vi.mock('../backend/retry.ts', async (importOriginal) => {
   const m = await importOriginal<typeof import('../backend/retry.ts')>();
@@ -23,6 +25,7 @@ vi.mock('../map/MapScene.tsx', async () => {
   type P = {
     docks: { id: string; songId: string }[];
     encounterSongIds: string[];
+    hereDocks?: { id: string; songId: string }[];
     currentSongId: string;
     flight: unknown;
     onShipTap?: (id: string) => void;
@@ -37,6 +40,9 @@ vi.mock('../map/MapScene.tsx', async () => {
           const d = p.docks.find((x) => x.songId === songId)!;
           return <button key={d.id} aria-label={`ship ${songId}`} onClick={() => p.onShipTap?.(d.id)} />;
         })}
+        {(p.hereDocks ?? []).map((d) => (
+          <button key={d.id} aria-label={`ship here ${d.id}`} onClick={() => p.onShipTap?.(d.id)} />
+        ))}
       </div>
     );
   }
@@ -345,6 +351,44 @@ describe('Explore', () => {
     await userEvent.click(screen.getByRole('button', { name: `ship ${songId}` }));
     expect(second).toHaveAttribute('aria-current', 'true');
     expect(cards()[0]).not.toHaveAttribute('aria-current');
+  });
+
+  it('draws other ships docked at the current star (not your own); tapping one shows Like and links, no Hitchhike', async () => {
+    const backend = demo();
+    const at = sample.docks[0]!.songId;
+    const theirs = sample.docks.filter((d) => d.songId === at).map((d) => d.id);
+    const own = await backend.setDock(at);
+    await backend.setHome(at);
+    await backend.startJourney(TZ, at);
+    render(<Explore backend={backend} tz={TZ} onNavigate={onNavigate} />);
+    await findCards();
+    expect(scene.props!.currentSongId).toBe(at);
+    expect(scene.props!.hereDocks!.map((d) => d.id).sort()).toEqual([...theirs].sort());
+    expect(screen.queryByRole('button', { name: `ship here ${own}` })).not.toBeInTheDocument();
+    expect(dockIdsShown()).not.toContain(theirs[0]);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: `ship here ${theirs[0]}` }));
+    const region = screen.getByLabelText('Docked here');
+    const card = within(region).getByRole('article');
+    expect(card).toHaveAttribute('data-dock-id', theirs[0]);
+    expect(within(card).getByRole('heading')).toHaveTextContent(songById.get(at)!.title);
+    expect(within(card).getByText('Sample')).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'Spotify' })).toHaveAttribute('href', songById.get(at)!.spotifyUrl);
+    expect(within(card).queryByRole('button', { name: 'Hitchhike' })).not.toBeInTheDocument();
+    await user.click(within(card).getByRole('button', { name: 'Like' }));
+    expect(within(card).getByRole('button', { name: 'Kept' })).toBeDisabled();
+    await user.click(within(card).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByLabelText('Docked here')).not.toBeInTheDocument();
+    expect(await findCards()).toHaveLength(3);
+  });
+
+  it('after hitchhiking, the ship you flew alongside is drawn at the star you landed on', async () => {
+    await open(demo());
+    const [first] = await findCards();
+    const dockId = first!.getAttribute('data-dock-id')!;
+    await userEvent.click(within(first!).getByRole('button', { name: 'Hitchhike' }));
+    await waitFor(() => expect(scene.props!.hereDocks!.map((d) => d.id)).toContain(dockId));
   });
 
   it('hides History and Inbox in demo mode; Ship and Dock navigate', async () => {
