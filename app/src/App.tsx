@@ -12,6 +12,10 @@ const SceneHarness = import.meta.env.DEV
   ? lazy(() => import('./dev/SceneHarness.tsx').then((m) => ({ default: m.SceneHarness })))
   : null;
 
+const PerfHarness = import.meta.env.DEV
+  ? lazy(() => import('./dev/PerfHarness.tsx').then((m) => ({ default: m.PerfHarness })))
+  : null;
+
 const SheetHarness = import.meta.env.DEV
   ? lazy(() => import('./dev/SheetHarness.tsx').then((m) => ({ default: m.SheetHarness })))
   : null;
@@ -66,6 +70,9 @@ function Screens() {
   if (!supportsWebGL2()) return <NoWebGL />;
   if (import.meta.env.DEV && SceneHarness && new URLSearchParams(location.search).has('scene')) {
     return <Suspense fallback={null}><SceneHarness /></Suspense>;
+  }
+  if (import.meta.env.DEV && PerfHarness && new URLSearchParams(location.search).has('perf')) {
+    return <Suspense fallback={null}><PerfHarness /></Suspense>;
   }
   const sheet = import.meta.env.DEV ? new URLSearchParams(location.search).get('sheet') : null;
   if (sheet && SheetHarness) return <Suspense fallback={null}><SheetHarness which={sheet} /></Suspense>;

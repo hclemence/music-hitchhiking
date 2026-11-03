@@ -5,8 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { adminClient } from '../../tests/integration/stack.ts';
 import { generateInviteCode, hashInviteCode } from '../../supabase/functions/_shared/core/recovery.ts';
 import { SHIP_COLOURS } from '../../supabase/functions/_shared/core/palette.ts';
-import { findEncounters } from '../../supabase/functions/_shared/core/encounters.ts';
-import { seededRng } from '../../supabase/functions/_shared/core/rng.ts';
+import { nextEncounter } from '../../supabase/functions/_shared/core/encounters.ts';
 import type { PublicDock, Star } from '../../supabase/functions/_shared/core/types.ts';
 import type { SampleMap } from '../../scripts/sample-map.ts';
 
@@ -14,14 +13,13 @@ import type { SampleMap } from '../../scripts/sample-map.ts';
  * The whole live flow for two people at phone size, against the local stack (seeded with
  * `pnpm seed:sample`, `pnpm functions:serve` running). Nothing is mocked.
  *
- * Making A's dock one of B's encounters deterministically: encounters are a seeded shuffle of the
- * docks near the current song. The test picks A's dock song X and B's start song Y (X's nearest
- * song) from the sample map by running core `findEncounters` at Y over the sample docks plus a
- * stand-in for A's dock at X, and keeps the first pair where A's dock is shown for every one of 64
- * shuffle seeds (in practice: the ring that decides holds A's dock and exactly one other). B then
- * starts the day at Y with "Start somewhere else", so on a freshly seeded stack A's ship is among
- * B's first encounters. Real docks left by other runs could crowd that ring, so B may also press
- * Wait (each Wait shows docks not yet shown at this hop) a bounded number of times.
+ * Making A's dock B's first encounter deterministically: encounters are one at a time, nearest
+ * first by 2D distance. The test picks A's dock song X (a song with no sample dock) and B's start
+ * song Y by running core `nextEncounter` at Y over the sample docks plus a stand-in for A's dock at
+ * X, keeping the first pair where that dock is the answer. B starts the day at Y with "Start
+ * somewhere else", so on a freshly seeded stack the first pop-up shows A's ship. Real docks left
+ * by other runs could be nearer, so B may press Wait (which reveals the next-closest) a bounded
+ * number of times.
  */
 
 type SampleSong = SampleMap['songs'][number];
@@ -47,17 +45,14 @@ function farthest(from: SampleSong, except: ReadonlySet<string>): SampleSong {
   return map.songs.filter((s) => !except.has(s.id) && plain(s)).sort((a, b) => dist(b, from) - dist(a, from))[0]!;
 }
 
-/** Whether a dock at `x` is among the first encounters at `y`, whatever the shuffle seed. */
-function alwaysMet(x: SampleSong, y: SampleSong): boolean {
+/** Whether a dock at `x` is B's first encounter when B starts at `y`. */
+function firstEncounter(x: SampleSong, y: SampleSong): boolean {
   const mine: PublicDock = { id: 'a', songId: x.id, isSample: false, shipColour: '#000000', updatedAt: new Date().toISOString() };
-  for (let seed = 0; seed < 64; seed++) {
-    const found = findEncounters({
-      current: star(y), stars, docks: [...sampleDocks, mine], ownDockId: null,
-      pathSongIds: new Set([y.id]), seenDockIds: new Set(), rng: seededRng(`e2e:${seed}`),
-    });
-    if (!found.some((e) => e.dock.id === 'a')) return false;
-  }
-  return true;
+  const found = nextEncounter({
+    current: star(y), stars, docks: [...sampleDocks, mine], ownDockId: null,
+    pathSongIds: new Set([y.id]), metDockIds: new Set(),
+  });
+  return found?.dock.id === 'a';
 }
 
 /** X: A's dock (a song with no sample dock). Y: B's start, X's nearest song. */
@@ -65,9 +60,9 @@ const pick = (() => {
   for (const x of map.songs) {
     if (sampleDocked.has(x.id) || !plain(x)) continue;
     const y = nearest(x, new Set([x.id]));
-    if (alwaysMet(x, y)) return { x, y };
+    if (firstEncounter(x, y)) return { x, y };
   }
-  throw new Error('no song pair where A\'s dock is always met');
+  throw new Error("no song pair where A's dock is B's first encounter");
 })();
 const X = pick.x;
 const Y = pick.y;
@@ -106,7 +101,7 @@ async function userIdOf(page: Page): Promise<string> {
 }
 
 async function shot(page: Page, name: string) {
-  await page.screenshot({ path: join(SHOTS, `e2e-${name}.png`) });
+  await page.screenshot({ path: join(SHOTS, `e2e2-${name}.png`) });
 }
 
 function rgb(hex: string): string {
@@ -114,8 +109,15 @@ function rgb(hex: string): string {
   return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
 }
 
-const encounters = (page: Page) => page.getByRole('region', { name: 'Encounters' });
-const cards = (page: Page) => encounters(page).locator('article.card');
+/** A row's ship picture: a rendered thumbnail, or the plain colour dot while it loads or without WebGL. */
+async function expectShip(row: Locator, colour: string) {
+  const el = row.locator('.ship-badge, .ship-dot').first();
+  await expect(el).toBeVisible();
+  if ((await el.getAttribute('class'))?.includes('ship-dot')) await expect(el).toHaveCSS('background-color', rgb(colour));
+}
+
+const popup = (page: Page) => page.getByRole('dialog', { name: "You've encountered someone" });
+const waitBtn = (page: Page) => page.getByRole('navigation', { name: 'Actions' }).getByRole('button', { name: 'Wait' });
 const hereTitle = (page: Page) => page.getByLabel('You are here').locator('.now-title');
 const stops = (page: Page, n: number) => page.getByRole('button', { name: `Route map, ${n} ${n === 1 ? 'stop' : 'stops'}` });
 
@@ -125,10 +127,20 @@ async function chooseSong(scope: Page | Locator, song: SampleSong) {
   await scope.locator('.results button').filter({ hasText: song.title }).filter({ hasText: song.artist }).first().click();
 }
 
-/** Waits until a hop has landed: no flight, no pending hop (Wait and Hitchhike are enabled again). */
+/**
+ * Waits until the stop has settled and a pop-up is open: the reveal comes about 1.5 s after
+ * arriving and the ship takes 1.2 s to fly in (Wait is disabled until then). If the reveal
+ * does not come, presses Wait to ask for the next-closest ship.
+ */
 async function settled(page: Page) {
-  await expect(page.getByRole('navigation', { name: 'Actions' }).getByRole('button', { name: 'Wait' })).toBeEnabled();
-  await expect(cards(page).first().getByRole('button', { name: 'Hitchhike' })).toBeEnabled();
+  await expect(waitBtn(page)).toBeEnabled();
+  const p = popup(page);
+  if (!(await p.isVisible().catch(() => false))) {
+    await p.waitFor({ state: 'visible', timeout: 6000 }).catch(async () => { await waitBtn(page).click(); });
+  }
+  await expect(p).toBeVisible();
+  await expect(p.getByRole('button', { name: 'Hitchhike' })).toBeEnabled();
+  await expect(waitBtn(page)).toBeEnabled();
 }
 
 /** Invite → recovery code → ship colour → dock (also home). Ends on "Where do you want to start today?". */
@@ -165,11 +177,11 @@ async function onboard(page: Page, who: string, colour: number, dock: SampleSong
   await shot(page, `${who}-06-start-choice`);
 }
 
-async function hitchhikeFirst(page: Page, stopsAfter: number) {
+async function hitchhikePopup(page: Page, stopsAfter: number) {
   await settled(page);
-  const card = cards(page).first();
-  const title = (await card.locator('h3').textContent())!;
-  await card.getByRole('button', { name: 'Hitchhike' }).click();
+  const p = popup(page);
+  const title = (await p.locator('h3').textContent())!;
+  await p.getByRole('button', { name: 'Hitchhike' }).click();
   await expect(hereTitle(page)).toHaveText(title);
   await expect(stops(page, stopsAfter)).toBeVisible();
   await settled(page);
@@ -200,7 +212,9 @@ test('two people: explore, like, trace, suggestion and reply', async ({ browser 
   await a.page.getByRole('button', { name: 'Start from home' }).click();
   await expect(hereTitle(a.page)).toHaveText(X.title);
   await expect(stops(a.page, 1)).toBeVisible();
-  await expect(cards(a.page)).not.toHaveCount(0);
+  // About 1.5 s after arriving, the nearest ship flies over and its pop-up opens.
+  await expect(popup(a.page)).toBeVisible({ timeout: 15000 });
+  await expect(popup(a.page).locator('h3')).not.toHaveText(X.title);
   await expect(a.page.locator('canvas')).toBeVisible();
   // Phone first: no horizontal page scroll.
   expect(await a.page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
@@ -213,9 +227,9 @@ test('two people: explore, like, trace, suggestion and reply', async ({ browser 
   expect(aDock!.ship_colour.toLowerCase()).toBe(SHIP_COLOURS[A_COLOUR - 1]!.toLowerCase());
 
   // Hitchhike three times.
-  await hitchhikeFirst(a.page, 2);
-  await hitchhikeFirst(a.page, 3);
-  await hitchhikeFirst(a.page, 4);
+  await hitchhikePopup(a.page, 2);
+  await hitchhikePopup(a.page, 3);
+  await hitchhikePopup(a.page, 4);
   await shot(a.page, 'a-08-after-3-hitchhikes');
 
   // Tap the root on the mini-map: back home with no new hop.
@@ -229,7 +243,7 @@ test('two people: explore, like, trace, suggestion and reply', async ({ browser 
   await expect(stops(a.page, 4)).toBeVisible();
 
   // Hitchhike from the root: a branch.
-  await hitchhikeFirst(a.page, 5);
+  await hitchhikePopup(a.page, 5);
   const { data: journey } = await admin.from('journeys').select('id').eq('user_id', aId).single();
   const { data: hops, error: hopsErr } = await admin.from('hops').select('id, parent_hop_id, kind')
     .eq('journey_id', journey!.id);
@@ -239,40 +253,44 @@ test('two people: explore, like, trace, suggestion and reply', async ({ browser 
   expect(hops!.filter((h) => h.parent_hop_id === root.id)).toHaveLength(2);
   await shot(a.page, 'a-10-branch');
 
-  // Like an encounter.
-  const likeCard = cards(a.page).first();
+  // Like the encounter in the pop-up.
+  await settled(a.page);
   const liked = a.page.waitForResponse((r) => r.url().includes('/rpc/like_dock') && r.ok());
-  await likeCard.getByRole('button', { name: 'Like' }).click();
-  await expect(likeCard.getByRole('button', { name: 'Kept' })).toBeDisabled();
+  await popup(a.page).getByRole('button', { name: 'Like' }).click();
+  await expect(popup(a.page).getByRole('button', { name: 'Kept' })).toBeDisabled();
   await liked;
   await shot(a.page, 'a-11-liked');
 
-  // ---- B: onboard, start next to A's dock, find A's ship ----
+  // ---- B: onboard, start next to A's dock, meet A's ship ----
   const b = await phone(browser);
   await onboard(b.page, 'b', B_COLOUR, Z);
   await b.page.getByRole('button', { name: 'Start somewhere else' }).click();
   await chooseSong(b.page, Y);
   await expect(hereTitle(b.page)).toHaveText(Y.title);
 
-  const aCard = cards(b.page).and(b.page.locator(`[data-dock-id="${aDock!.id}"]`));
+  // The first pop-up should already be A's ship; Wait (disabled during the 1.2 s fly-in) is the fallback.
+  const bPopup = popup(b.page);
+  await expect(bPopup).toBeVisible({ timeout: 30000 });
+  const aShown = () => bPopup.locator(`xpath=self::*[@data-dock-id="${aDock!.id}"]`);
   let waits = 0;
-  for (; waits < 40 && (await aCard.count()) === 0; waits++) {
-    await b.page.getByRole('navigation', { name: 'Actions' }).getByRole('button', { name: 'Wait' }).click();
-    await b.page.waitForTimeout(250);
+  for (; waits < 40 && (await aShown().count()) === 0; waits++) {
+    await expect(waitBtn(b.page)).toBeEnabled();
+    await waitBtn(b.page).click();
+    await b.page.waitForTimeout(300);
+    await expect(waitBtn(b.page)).toBeEnabled();
   }
   test.info().annotations.push({ type: 'waits', description: `B pressed Wait ${waits} time(s) before A's ship appeared` });
   console.log(`B pressed Wait ${waits} time(s) before A's ship appeared`);
-  await expect(aCard).toBeVisible();
-  await expect(aCard).toHaveAccessibleName(`${X.title} by ${X.artist}`);
-  await expect(aCard.locator('[data-swatch]')).toHaveCSS('background-color', rgb(SHIP_COLOURS[A_COLOUR - 1]!));
-  await expect(aCard.getByText('Sample')).toHaveCount(0);
-  expect((await aCard.locator('[data-swatch]').boundingBox())!.width).toBeLessThan(30); // a dot, not a bar
-  await aCard.scrollIntoViewIfNeeded();
+  await expect(bPopup.locator('h2')).toHaveText("You've encountered someone");
+  await expect(bPopup.locator('h3')).toHaveText(X.title);
+  await expect(bPopup.locator('.artist')).toHaveText(X.artist);
+  await expect(bPopup.getByText('Sample')).toHaveCount(0);
+  await expect(waitBtn(b.page)).toBeEnabled(); // the ship has flown in
   await shot(b.page, 'b-07-encounter-a');
 
   const bLiked = b.page.waitForResponse((r) => r.url().includes('/rpc/like_dock') && r.ok());
-  await aCard.getByRole('button', { name: 'Like' }).click();
-  await expect(aCard.getByRole('button', { name: 'Kept' })).toBeDisabled();
+  await bPopup.getByRole('button', { name: 'Like' }).click();
+  await expect(bPopup.getByRole('button', { name: 'Kept' })).toBeDisabled();
   await bLiked;
 
   // History shows A's ship; send A a song.
@@ -280,7 +298,7 @@ test('two people: explore, like, trace, suggestion and reply', async ({ browser 
   const history = b.page.getByRole('dialog', { name: 'History' });
   const trace = history.locator('li.row').filter({ hasText: X.title });
   await expect(trace).toBeVisible();
-  await expect(trace.locator('.ship-dot')).toHaveCSS('background-color', rgb(SHIP_COLOURS[A_COLOUR - 1]!));
+  await expectShip(trace, SHIP_COLOURS[A_COLOUR - 1]!);
   await shot(b.page, 'b-08-history');
   await trace.getByRole('button', { name: 'Send a song' }).click();
   await expect(history.getByRole('heading', { name: `Send a song to ${X.title}'s ship` })).toBeVisible();
@@ -288,6 +306,14 @@ test('two people: explore, like, trace, suggestion and reply', async ({ browser 
   await expect(history.getByRole('status')).toHaveText('Sent');
   await shot(b.page, 'b-09-sent');
   await history.getByRole('button', { name: 'Close' }).click();
+
+  // Hitchhike from the pop-up to A's song.
+  await expect(bPopup).toBeVisible();
+  await bPopup.getByRole('button', { name: 'Hitchhike' }).click();
+  await expect(hereTitle(b.page)).toHaveText(X.title);
+  await expect(stops(b.page, 2)).toBeVisible();
+  await expect(waitBtn(b.page)).toBeEnabled();
+  await shot(b.page, 'b-10-hitchhiked');
 
   // ---- A: reload, inbox dot, suggestion, reply ----
   await a.page.reload();
@@ -299,7 +325,7 @@ test('two people: explore, like, trace, suggestion and reply', async ({ browser 
   const aInbox = a.page.getByRole('dialog', { name: 'Inbox' });
   const suggestion = aInbox.locator('li.row').filter({ hasText: S.title });
   await expect(suggestion).toContainText(S.artist);
-  await expect(suggestion.locator('.ship-dot')).toHaveCSS('background-color', rgb(SHIP_COLOURS[B_COLOUR - 1]!));
+  await expectShip(suggestion, SHIP_COLOURS[B_COLOUR - 1]!);
   await expect(aInbox.getByText(`Someone kept your song: ${X.title}`)).toBeVisible();
   await shot(a.page, 'a-13-inbox');
   await suggestion.getByRole('button', { name: 'Reply' }).click();
@@ -310,15 +336,15 @@ test('two people: explore, like, trace, suggestion and reply', async ({ browser 
 
   // ---- B: the reply arrives ----
   await b.page.reload();
-  await expect(hereTitle(b.page)).toHaveText(Y.title);
+  await expect(hereTitle(b.page)).toBeVisible();
   const bInboxBtn = b.page.getByRole('navigation', { name: 'Actions' }).getByRole('button', { name: 'Inbox (new)' });
   await expect(bInboxBtn).toBeVisible();
   await bInboxBtn.click();
   const bInbox = b.page.getByRole('dialog', { name: 'Inbox' });
   const reply = bInbox.locator('li.row').filter({ hasText: R.title });
   await expect(reply).toContainText(R.artist);
-  await expect(reply.locator('.ship-dot')).toHaveCSS('background-color', rgb(SHIP_COLOURS[A_COLOUR - 1]!));
-  await shot(b.page, 'b-10-inbox-reply');
+  await expectShip(reply, SHIP_COLOURS[A_COLOUR - 1]!);
+  await shot(b.page, 'b-11-inbox-reply');
 
   await a.context.close();
   await b.context.close();
