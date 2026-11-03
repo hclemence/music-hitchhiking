@@ -1,5 +1,5 @@
-import { expect, test } from 'vitest';
-import { findEncounters } from './encounters.ts';
+import { describe, expect, test } from 'vitest';
+import { findEncounters, nextEncounter } from './encounters.ts';
 import { seededRng } from './rng.ts';
 import type { PublicDock, Star } from './types.ts';
 
@@ -133,4 +133,86 @@ test('chooses randomly among surplus members of a band', () => {
     seen.add(run(stars, docks, { rng: seededRng(`seed${i}`) }).map((e) => e.songId).join());
   }
   expect(seen.size).toBeGreaterThan(1);
+});
+
+// ---- nextEncounter ----
+
+const star2 = (id: string, x: number, y: number, z = 0): Star => ({
+  id, x, y, z, localRadius: 10, regionId: 0, brightness: 1,
+});
+
+function next(stars: Star[], docks: PublicDock[], over: Partial<Parameters<typeof nextEncounter>[0]> = {}) {
+  return nextEncounter({
+    current,
+    stars: new Map([current, ...stars].map((s) => [s.id, s])),
+    docks,
+    ownDockId: null,
+    pathSongIds: new Set(),
+    metDockIds: new Set(),
+    ...over,
+  });
+}
+
+describe('nextEncounter', () => {
+  test('returns the nearest by 2D distance, ignoring z', () => {
+    const far = star2('far', 5, 0, 0);
+    const tall = star2('tall', 1, 1, 500);
+    const r = next([far, tall], [dock('d1', 'far'), dock('d2', 'tall')]);
+    expect(r?.songId).toBe('tall');
+    expect(r?.distance).toBeCloseTo(Math.SQRT2);
+  });
+
+  test('excludes own dock, current song, path songs, met docks, unknown songs', () => {
+    const stars = [star2('a', 1, 0), star2('b', 2, 0), star2('c2', 3, 0), star2('d', 4, 0), star2('e', 5, 0)];
+    const docks = [
+      dock('own', 'a'), dock('onCurrent', 'c'), dock('p', 'b'), dock('met', 'c2'),
+      dock('ghost', 'nowhere'), dock('ok', 'e'),
+    ];
+    const r = next(stars, docks, {
+      ownDockId: 'own', pathSongIds: new Set(['b']), metDockIds: new Set(['met']),
+    });
+    expect(r?.dock.id).toBe('ok');
+  });
+
+  test('groups same-song docks: newest shown, othersCount is the rest', () => {
+    const r = next([star2('a', 1, 0)], [
+      dock('old', 'a', '2026-01-01T00:00:00Z'),
+      dock('new', 'a', '2026-03-01T00:00:00Z'),
+      dock('mid', 'a', '2026-02-01T00:00:00Z'),
+    ]);
+    expect(r?.dock.id).toBe('new');
+    expect(r?.othersCount).toBe(2);
+  });
+
+  test('a met newest dock still offers the next-newest unmet dock', () => {
+    const r = next([star2('a', 1, 0)], [
+      dock('old', 'a', '2026-01-01T00:00:00Z'),
+      dock('new', 'a', '2026-03-01T00:00:00Z'),
+      dock('mid', 'a', '2026-02-01T00:00:00Z'),
+    ], { metDockIds: new Set(['new']) });
+    expect(r?.dock.id).toBe('mid');
+    expect(r?.othersCount).toBe(1);
+  });
+
+  test('ties are broken by smaller dock id', () => {
+    const r = next([star2('a', 1, 0), star2('b', -1, 0)], [dock('d2', 'a'), dock('d1', 'b')]);
+    expect(r?.dock.id).toBe('d1');
+  });
+
+  test('returns null when nothing is left', () => {
+    expect(next([], [])).toBeNull();
+    expect(next([star2('a', 1, 0)], [dock('d', 'a')], { metDockIds: new Set(['d']) })).toBeNull();
+  });
+
+  test('repeated calls yield every eligible song once in distance order', () => {
+    const stars = [star2('a', 3, 0), star2('b', 1, 0), star2('c2', 2, 4), star2('d', 0, 2)];
+    const docks = [dock('1', 'a'), dock('2', 'b'), dock('3', 'c2'), dock('4', 'd'), dock('5', 'b', '2026-05-01T00:00:00Z')];
+    const met = new Set<string>();
+    const songs: string[] = [];
+    for (let e = next(stars, docks, { metDockIds: met }); e; e = next(stars, docks, { metDockIds: met })) {
+      if (!songs.includes(e.songId)) songs.push(e.songId);
+      met.add(e.dock.id);
+    }
+    expect(songs).toEqual(['b', 'd', 'a', 'c2']);
+  });
 });
