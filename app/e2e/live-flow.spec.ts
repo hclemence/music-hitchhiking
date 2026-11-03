@@ -128,17 +128,13 @@ async function chooseSong(scope: Page | Locator, song: SampleSong) {
 }
 
 /**
- * Waits until the stop has settled and a pop-up is open: the reveal comes about 1.5 s after
- * arriving and the ship takes 1.2 s to fly in (Wait is disabled until then). If the reveal
- * does not come, presses Wait to ask for the next-closest ship.
+ * Waits until the stop has settled and a pop-up is open. The reveal must happen on its own about
+ * 1.5 s after arriving (the ship then takes 1.2 s to fly in and Wait is disabled until it has):
+ * if it does not within a generous 30 s (software GL), the test fails.
  */
 async function settled(page: Page) {
-  await expect(waitBtn(page)).toBeEnabled();
   const p = popup(page);
-  if (!(await p.isVisible().catch(() => false))) {
-    await p.waitFor({ state: 'visible', timeout: 6000 }).catch(async () => { await waitBtn(page).click(); });
-  }
-  await expect(p).toBeVisible();
+  await expect(p).toBeVisible({ timeout: 30_000 });
   await expect(p.getByRole('button', { name: 'Hitchhike' })).toBeEnabled();
   await expect(waitBtn(page)).toBeEnabled();
 }

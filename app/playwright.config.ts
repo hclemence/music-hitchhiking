@@ -42,7 +42,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'live', testMatch: /live-flow\.spec\.ts/, use: { baseURL: `http://localhost:${LIVE_PORT}` } },
-    { name: 'demo', testMatch: /demo-offline\.spec\.ts/ },
+    // The demo has one page, so it keeps the 2x pixel ratio (outline and point-size paths at DPR 2).
+    { name: 'demo', testMatch: /demo-offline\.spec\.ts/, use: { deviceScaleFactor: 2 } },
   ],
   webServer: s
     ? {
