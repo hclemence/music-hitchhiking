@@ -13,6 +13,7 @@ Node 22, pnpm 10, Docker (the Supabase CLI runs the local stack in containers).
 pnpm install
 pnpm db:start        # local Postgres, Auth, REST, Realtime, edge runtime (first start pulls images)
 pnpm db:reset        # apply supabase/migrations to a clean database
+pnpm seed:sample    # optional: load the sample song map (needs the stack running; idempotent)
 ```
 
 `pnpm supabase status -o env` prints the local URL and keys.
