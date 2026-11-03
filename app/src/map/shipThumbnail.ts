@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { buildShuttle, createOutlineMaterial } from './shuttle.ts';
 
+/** Camera distance at which a sphere of `radius` fits the vertical FOV with a margin. */
+export function fitDistance(radius: number, fovDeg: number, margin = 1.12): number {
+  return (radius * margin) / Math.sin((fovDeg * Math.PI) / 360);
+}
+
 interface Rig {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -32,8 +37,12 @@ function getRig(): Rig {
   })));
   scene.add(new THREE.Mesh(geo.glow, new THREE.MeshBasicMaterial({ color: 0xfff0c2, side: THREE.DoubleSide })));
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
-  camera.position.set(0.95, 0.75, -1.45); // front, right, above: a 3/4 view
-  camera.lookAt(0, -0.02, 0);
+  // Front, right, above: a 3/4 view, framed on the whole shuttle's bounding sphere.
+  geo.outline.computeBoundingSphere();
+  const sphere = geo.outline.boundingSphere!;
+  const dir = new THREE.Vector3(0.95, 0.75, -1.45).normalize();
+  camera.position.copy(sphere.center).addScaledVector(dir, fitDistance(sphere.radius + 0.02, camera.fov));
+  camera.lookAt(sphere.center);
   rig = { renderer, scene, camera, paint, outline };
   return rig;
 }
@@ -46,9 +55,8 @@ export function shipThumbnail(colour: string, sizePx = 40): Promise<string> {
   if (unavailable) return Promise.reject(new Error('WebGL unavailable'));
   try {
     const r = getRig();
-    const px = Math.round(sizePx * Math.min(2, globalThis.devicePixelRatio || 1));
-    r.renderer.setSize(px, px, false);
-    r.outline.uniforms.uResolution!.value.set(px, px);
+    r.renderer.setPixelRatio(Math.min(2, globalThis.devicePixelRatio || 1));
+    r.renderer.setSize(sizePx, sizePx, false);
     r.paint.color.set(colour);
     r.renderer.render(r.scene, r.camera);
     const url = r.renderer.domElement.toDataURL('image/png');

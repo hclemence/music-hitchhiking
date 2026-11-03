@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { buildShuttle, buildSimpleShuttle, createOutlineMaterial, shipWorldLength } from './shuttle.ts';
+import { buildShuttle, buildSimpleShuttle, createOutlineMaterial, outlineWidthDevicePx, shipWorldLength, syncOutlineUniforms } from './shuttle.ts';
 
 function box(g: THREE.BufferGeometry) {
   g.computeBoundingBox();
@@ -65,14 +65,33 @@ describe('createOutlineMaterial', () => {
 
 describe('shipWorldLength', () => {
   const fov = 40, vh = 800, d = 300;
-  const pxOf = (len: number, dist = d) => (len / (2 * dist * Math.tan((fov * Math.PI) / 360))) * vh;
-  it('projects to 24 px by default', () => {
-    expect(pxOf(shipWorldLength(d, fov, vh))).toBeCloseTo(24, 3);
+  const pxOf = (len: number, dist: number) => (len / (2 * dist * Math.tan((fov * Math.PI) / 360))) * vh;
+  it('projects to 24 px at the default distance (the camera distance when omitted)', () => {
+    expect(pxOf(shipWorldLength(d, fov, vh), d)).toBeCloseTo(24, 3);
+    expect(pxOf(shipWorldLength(d, fov, vh, { defaultDistance: d }), d)).toBeCloseTo(24, 3);
   });
-  it('never drops below 14 px', () => {
-    expect(pxOf(shipWorldLength(d, fov, vh, { targetPx: 5 }))).toBeGreaterThanOrEqual(14 - 1e-6);
+  it('has a fixed world length: shrinks naturally when farther, then floors at 14 px', () => {
+    expect(pxOf(shipWorldLength(d * 1.5, fov, vh, { defaultDistance: d }), d * 1.5)).toBeCloseTo(16, 3);
+    expect(pxOf(shipWorldLength(d * 10, fov, vh, { defaultDistance: d }), d * 10)).toBeCloseTo(14, 3);
   });
-  it('is 1.2x larger when mine', () => {
+  it('grows naturally when closer, then caps at 48 px', () => {
+    expect(pxOf(shipWorldLength(d / 1.5, fov, vh, { defaultDistance: d }), d / 1.5)).toBeCloseTo(36, 3);
+    expect(pxOf(shipWorldLength(d / 10, fov, vh, { defaultDistance: d }), d / 10)).toBeCloseTo(48, 3);
+  });
+  it('is 1.2x larger when mine, applied after clamping', () => {
     expect(shipWorldLength(d, fov, vh, { mine: true })).toBeCloseTo(shipWorldLength(d, fov, vh) * 1.2, 6);
+    const far = shipWorldLength(d * 10, fov, vh, { defaultDistance: d, mine: true });
+    expect(pxOf(far, d * 10)).toBeCloseTo(14 * 1.2, 3);
+  });
+});
+
+describe('syncOutlineUniforms', () => {
+  it('uses drawing-buffer pixels and scales the CSS width by the pixel ratio', () => {
+    const m = createOutlineMaterial(2);
+    syncOutlineUniforms(m, 800, 600, 2);
+    expect(m.uniforms.uResolution!.value.toArray()).toEqual([800, 600]);
+    expect(m.uniforms.uPixelRatio!.value).toBe(2);
+    expect(outlineWidthDevicePx(m)).toBe(4);
+    expect(m.uniforms.uWidthPx!.value).toBe(2);
   });
 });

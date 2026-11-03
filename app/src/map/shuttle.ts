@@ -179,13 +179,14 @@ export function buildSimpleShuttle(): { paint: THREE.BufferGeometry; outline: TH
 const VERT = /* glsl */ `
 uniform vec2 uResolution;
 uniform float uWidthPx;
+uniform float uPixelRatio;
 void main() {
   vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   vec3 n = normalize(normalMatrix * normal);
   vec2 dir = (projectionMatrix * vec4(n, 0.0)).xy * uResolution;
   float len = length(dir);
   dir = len > 1e-6 ? dir / len : vec2(0.0);
-  clip.xy += dir / uResolution * 2.0 * uWidthPx * clip.w;
+  clip.xy += dir / uResolution * 2.0 * uWidthPx * uPixelRatio * clip.w;
   gl_Position = clip;
 }`;
 const FRAG = /* glsl */ `
@@ -195,28 +196,51 @@ void main() { gl_FragColor = vec4(uColor, uOpacity); }`;
 
 /** White back-face shell inflated along the screen-projected normal: constant width in pixels. */
 export function createOutlineMaterial(widthPx = 2): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+  const m = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     vertexShader: VERT,
     fragmentShader: FRAG,
     uniforms: {
       uWidthPx: { value: widthPx },
+      uPixelRatio: { value: 1 },
       uResolution: { value: new THREE.Vector2(1, 1) },
       uColor: { value: new THREE.Color(0xffffff) },
       uOpacity: { value: 1 },
     },
   });
+  m.onBeforeRender = onBeforeRender as unknown as THREE.Material['onBeforeRender'];
+  return m;
+}
+
+/** Point an outline material at the drawing buffer it is about to render into. */
+export function syncOutlineUniforms(m: THREE.ShaderMaterial, bufferW: number, bufferH: number, pixelRatio: number) {
+  (m.uniforms.uResolution!.value as THREE.Vector2).set(bufferW, bufferH);
+  m.uniforms.uPixelRatio!.value = pixelRatio;
+}
+
+/** The outline width in device pixels (uWidthPx is in CSS pixels). */
+export function outlineWidthDevicePx(m: THREE.ShaderMaterial): number {
+  return (m.uniforms.uWidthPx!.value as number) * (m.uniforms.uPixelRatio!.value as number);
+}
+
+const bufferSize = new THREE.Vector2();
+/** Called by three right before each draw, so every canvas (and the thumbnail renderer) gets its own size. */
+function onBeforeRender(this: THREE.ShaderMaterial, renderer: THREE.WebGLRenderer) {
+  renderer.getDrawingBufferSize(bufferSize);
+  syncOutlineUniforms(this, bufferSize.x, bufferSize.y, renderer.getPixelRatio());
 }
 
 /**
- * World length that projects to `targetPx` pixels tall-equivalent at `cameraDistance`, never below
- * `minPx`; `mine` makes your own ship 20% larger.
+ * World length of a ship with a fixed size that projects to `targetPx` at `defaultDistance`
+ * (the camera distance when omitted). At other distances it scales naturally, clamped to
+ * [minPx, maxPx] on screen; `mine` makes your own ship 20% larger, after clamping.
  */
 export function shipWorldLength(
   cameraDistance: number, fovDeg: number, viewportHeightPx: number,
-  opts: { targetPx?: number; minPx?: number; mine?: boolean } = {},
+  opts: { defaultDistance?: number; targetPx?: number; minPx?: number; maxPx?: number; mine?: boolean } = {},
 ): number {
-  const { targetPx = 24, minPx = 14, mine = false } = opts;
+  const { defaultDistance = cameraDistance, targetPx = 24, minPx = 14, maxPx = 48, mine = false } = opts;
   const worldPerPx = (2 * cameraDistance * Math.tan((fovDeg * Math.PI) / 360)) / viewportHeightPx;
-  return Math.max(targetPx, minPx) * worldPerPx * (mine ? 1.2 : 1);
+  const px = Math.min(maxPx, Math.max(minPx, (targetPx * defaultDistance) / cameraDistance));
+  return px * worldPerPx * (mine ? 1.2 : 1);
 }
