@@ -19,3 +19,9 @@ export function randomUnitVector(rng: () => number): Vec3 {
   const s = Math.sqrt(1 - z * z);
   return { x: s * Math.cos(phi), y: s * Math.sin(phi), z };
 }
+
+/** Uniformly distributed point on the unit circle, in the z = 0 plane. */
+export function randomUnitVector2D(rng: () => number): Vec3 {
+  const phi = 2 * Math.PI * rng();
+  return { x: Math.cos(phi), y: Math.sin(phi), z: 0 };
+}

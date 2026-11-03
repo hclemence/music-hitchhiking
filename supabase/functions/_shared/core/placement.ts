@@ -1,11 +1,13 @@
 import type { Vec3 } from './types.ts';
-import { add, distance, randomUnitVector, scale } from './vec.ts';
+import { add, distance, randomUnitVector, randomUnitVector2D, scale } from './vec.ts';
 
 export const ISLAND_MIN_RADIUS = 1100;
 export const ISLAND_MAX_RADIUS = 1200;
 export const OFFSET_FRACTION = 0.1;
 export const LOCAL_RADIUS_K = 30;
 export const DEFAULT_LOCAL_RADIUS = 100;
+
+export type PlacementOptions = { planar?: boolean };
 
 export type Neighbour = {
   position: Vec3 | null;
@@ -19,11 +21,13 @@ const clamp01 = (w: number): number => Math.min(1, Math.max(0, w));
  * Position a new song near its similar neighbours: the weighted mean of their
  * positions plus a random offset of up to 10% of their mean local radius.
  * With no positioned neighbour (position null or weight 0) the song becomes an
- * island on a shell of radius 1100..1200 around the origin.
+ * island on a shell of radius 1100..1200 around the origin (a ring in the
+ * z = 0 plane when opts.planar).
  */
 export function placeSong(
   neighbours: readonly Neighbour[],
   rng: () => number,
+  opts: PlacementOptions = {},
 ): { position: Vec3; island: boolean } {
   const usable = neighbours
     .map((n) => ({ position: n.position, weight: clamp01(n.weight), localRadius: n.localRadius }))
@@ -32,7 +36,7 @@ export function placeSong(
     );
 
   if (usable.length === 0) {
-    const dir = randomUnitVector(rng);
+    const dir = (opts.planar ? randomUnitVector2D : randomUnitVector)(rng);
     const radius = ISLAND_MIN_RADIUS + rng() * (ISLAND_MAX_RADIUS - ISLAND_MIN_RADIUS);
     return { position: scale(dir, radius), island: true };
   }
@@ -49,7 +53,7 @@ export function placeSong(
   const meanRadius = radiusSum / usable.length;
 
   const length = rng() * OFFSET_FRACTION * meanRadius;
-  return { position: add(mean, scale(randomUnitVector(rng), length)), island: false };
+  return { position: add(mean, scale((opts.planar ? randomUnitVector2D : randomUnitVector)(rng), length)), island: false };
 }
 
 /** A point at (1 - weight) * localRadius from the anchor, in a random direction. */
@@ -58,8 +62,9 @@ export function placeAround(
   weight: number,
   localRadius: number,
   rng: () => number,
+  opts: PlacementOptions = {},
 ): Vec3 {
-  return add(anchor, scale(randomUnitVector(rng), (1 - clamp01(weight)) * localRadius));
+  return add(anchor, scale((opts.planar ? randomUnitVector2D : randomUnitVector)(rng), (1 - clamp01(weight)) * localRadius));
 }
 
 /**

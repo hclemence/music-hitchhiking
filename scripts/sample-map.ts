@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { seededRng } from '../supabase/functions/_shared/core/rng.ts';
-import { computeLocalRadius, nearestRegion } from '../supabase/functions/_shared/core/placement.ts';
+import { computeLocalRadius } from '../supabase/functions/_shared/core/placement.ts';
 import { SHIP_COLOURS } from '../supabase/functions/_shared/core/palette.ts';
-import { distance, randomUnitVector } from '../supabase/functions/_shared/core/vec.ts';
+import { distance, randomUnitVector2D } from '../supabase/functions/_shared/core/vec.ts';
 
 export type SampleSong = {
   id: string; mbid: string; title: string; artist: string;
@@ -13,7 +13,7 @@ export type SampleRegion = { id: number; x: number; y: number; z: number; adjace
 export type SampleDock = { id: string; songId: string; shipColour: string };
 export type SampleMap = { regions: SampleRegion[]; songs: SampleSong[]; docks: SampleDock[] };
 
-const SPHERE_RADIUS = 600;
+const DISC_RADIUS = 600;
 const CLUSTER_RADIUS = 140;
 const MIN_CENTRE_GAP = 300;
 const NEIGHBOURS = 4;
@@ -37,21 +37,21 @@ export function buildSampleMap(
   const rng = seededRng(seed);
   const clusterCount = 12;
 
-  // Cluster centres on a sphere, rejection-sampled so neighbourhoods stay apart.
+  // Cluster centres on a disc, rejection-sampled so neighbourhoods stay apart.
   const centres: { x: number; y: number; z: number }[] = [];
   let gap = MIN_CENTRE_GAP;
   for (let tries = 0; centres.length < clusterCount; tries++) {
     if (tries > 0 && tries % 500 === 0) gap *= 0.9;
-    const u = randomUnitVector(rng);
-    const c = { x: u.x * SPHERE_RADIUS, y: u.y * SPHERE_RADIUS, z: u.z * SPHERE_RADIUS };
+    const u = randomUnitVector2D(rng);
+    const c = { x: u.x * DISC_RADIUS, y: u.y * DISC_RADIUS, z: 0 };
     if (centres.every((o) => distance(c, o) >= gap)) centres.push(c);
   }
 
   const positions = input.map((s) => {
     const c = centres[s.cluster];
-    const d = randomUnitVector(rng);
-    const r = Math.cbrt(rng()) * CLUSTER_RADIUS;
-    return { x: c.x + d.x * r, y: c.y + d.y * r, z: c.z + d.z * r };
+    const d = randomUnitVector2D(rng);
+    const r = Math.sqrt(rng()) * CLUSTER_RADIUS;
+    return { x: c.x + d.x * r, y: c.y + d.y * r, z: 0 };
   });
 
   const adj = centres.map(() => new Set<number>());
@@ -64,20 +64,19 @@ export function buildSampleMap(
       .forEach((e) => { adj[i].add(e.j); adj[e.j].add(i); });
   });
   const regions: SampleRegion[] = centres.map((c, i) => ({
-    id: i, x: round3(c.x), y: round3(c.y), z: round3(c.z),
+    id: i, x: round3(c.x), y: round3(c.y), z: 0,
     adjacent: [...adj[i]].sort((a, b) => a - b),
   }));
-  const regionPts = regions.map((r) => ({ x: r.x, y: r.y, z: r.z }));
 
   const songs: SampleSong[] = input.map((s, i) => {
     const p = positions[i];
     const others = positions.filter((_, j) => j !== i);
     const id = songUuid(s.artist, s.title);
     const q = encodeURIComponent(`${s.artist} ${s.title}`);
-    const pos = { x: round3(p.x), y: round3(p.y), z: round3(p.z) };
+    const pos = { x: round3(p.x), y: round3(p.y), z: 0 };
     return {
       id, mbid: id, title: s.title, artist: s.artist, ...pos,
-      regionId: nearestRegion(pos, regionPts),
+      regionId: s.cluster,
       localRadius: round3(computeLocalRadius(p, others, 30)),
       spotifyUrl: `https://open.spotify.com/search/${q}`,
       appleUrl: `https://music.apple.com/search?term=${q}`,
