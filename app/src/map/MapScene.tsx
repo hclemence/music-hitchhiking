@@ -2,10 +2,9 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { regionPalette } from '@core/palette.ts';
 import type { PublicDock } from '@core/types.ts';
 import type { Region, Song } from '../backend/types.ts';
-import { buildStarBuffers } from './stars.ts';
+import { buildStarBuffers, regionColours } from './stars.ts';
 import { Dust, Stars } from './Stars.tsx';
 import { ShipModel } from './ShipModel.tsx';
 import { Flight, type FlightState, type Vec3 } from './Flight.tsx';
@@ -113,11 +112,7 @@ function Scene(props: MapSceneProps) {
   const controls = useRef<Controls>(null);
   const camera = useThree((s) => s.camera);
 
-  const palette = useMemo(() => {
-    const pairs: [number, number][] = [];
-    for (const r of regions) for (const a of r.adjacent) if (r.id < a) pairs.push([r.id, a]);
-    return regionPalette(colourSeed, regions.length, pairs);
-  }, [regions, colourSeed]);
+  const palette = useMemo(() => regionColours(colourSeed, regions), [regions, colourSeed]);
   const buffers = useMemo(() => buildStarBuffers(stars, palette), [stars, palette]);
   const ids = useMemo(() => stars.map((s) => s.id), [stars]);
 

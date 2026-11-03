@@ -6,6 +6,7 @@ import { StartFlow, RECOVERY_SAVED_KEY } from './ui/StartFlow.tsx';
 import { ShipPicker } from './ui/ShipPicker.tsx';
 import { DockSearch } from './ui/DockSearch.tsx';
 import { NoWebGL, supportsWebGL2 } from './ui/NoWebGL.tsx';
+import { ErrorBoundary } from './ui/ErrorBoundary.tsx';
 
 const SceneHarness = import.meta.env.DEV
   ? lazy(() => import('./dev/SceneHarness.tsx').then((m) => ({ default: m.SceneHarness })))
@@ -54,9 +55,14 @@ async function createBackend(): Promise<Backend> {
   return createSupabaseBackend(createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY), storage);
 }
 
-type Gate = 'unsavedCode' | 'loading' | 'error' | 'start' | 'onboardShip' | 'onboardDock' | 'ready';
+type Gate =
+  | 'unsavedCode' | 'loading' | 'error' | 'start' | 'profileError' | 'onboardShip' | 'onboardDock' | 'ready';
 
 export function App() {
+  return <ErrorBoundary><Screens /></ErrorBoundary>;
+}
+
+function Screens() {
   if (!supportsWebGL2()) return <NoWebGL />;
   if (import.meta.env.DEV && SceneHarness && new URLSearchParams(location.search).has('scene')) {
     return <Suspense fallback={null}><SceneHarness /></Suspense>;
@@ -102,12 +108,15 @@ function Main() {
   }, []);
   useEffect(() => { void boot(); }, [boot]);
 
+  // Resumed code saved: a member may already have a home, so never guess on a failed read
+  // (Ship/Dock would make them pick a dock again).
   const afterResume = async () => {
+    setGate('loading');
     try {
       const p = await backend!.getProfile();
       setGate(p.homeSongId ? 'ready' : 'onboardShip');
     } catch {
-      setGate('onboardShip');
+      setGate('profileError');
     }
   };
 
@@ -119,6 +128,14 @@ function Main() {
       <main className="center-screen">
         <p>Couldn't reach Music Hitchhiking.</p>
         <button type="button" className="primary" onClick={() => void boot()}>Try again</button>
+      </main>
+    );
+  }
+  if (gate === 'profileError') {
+    return (
+      <main className="center-screen">
+        <p>Couldn't load your profile.</p>
+        <button type="button" className="primary" onClick={() => void afterResume()}>Try again</button>
       </main>
     );
   }

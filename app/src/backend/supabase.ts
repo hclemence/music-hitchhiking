@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SHIP_COLOURS } from '@core/palette.ts';
+import { DEFAULT_LOCAL_RADIUS } from '@core/placement.ts';
 import {
   decodeRecoveryCode,
   encodeRecoveryCode,
@@ -65,7 +66,10 @@ function toSong(r: Row): Song {
   return {
     id: str(r.id), title: str(r.title), artist: str(r.artist),
     x: Number(r.x), y: Number(r.y), z: Number(r.z),
-    regionId: Number(r.region_id), localRadius: Number(r.local_radius), brightness: Number(r.brightness),
+    // Nullable in the schema: no region -> NaN (drawn in the neutral colour), no radius -> the core default.
+    regionId: r.region_id == null ? Number.NaN : Number(r.region_id),
+    localRadius: r.local_radius == null ? DEFAULT_LOCAL_RADIUS : Number(r.local_radius),
+    brightness: Number(r.brightness),
     spotifyUrl: str(r.spotify_url), appleUrl: str(r.apple_url), youtubeUrl: str(r.youtube_url),
   };
 }

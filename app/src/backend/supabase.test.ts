@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_LOCAL_RADIUS } from '@core/placement.ts';
 import { encodeRecoveryCode } from '@core/recovery.ts';
 import { createSupabaseBackend } from './supabase.ts';
 
@@ -50,6 +51,19 @@ describe('SupabaseBackend (unit)', () => {
     const map = await createSupabaseBackend(client, memoryStorage()).loadMap();
     expect(map.regions).toHaveLength(1005);
     expect(ranges.filter((r) => r[0] === 1000)).toHaveLength(3);
+  });
+
+  it('maps a null region_id to NaN (neutral colour) and a null local_radius to the core default', async () => {
+    const star = {
+      id: 's', title: 't', artist: 'a', x: 1, y: 2, z: 3, region_id: null, local_radius: null, brightness: 0.5,
+      spotify_url: '', apple_url: '', youtube_url: '',
+    };
+    const client = {
+      from: (table: string) => query({ data: table === 'active_stars' ? [star] : [], error: null }),
+    } as unknown as SupabaseClient;
+    const map = await createSupabaseBackend(client, memoryStorage()).loadMap();
+    expect(map.stars[0]!.regionId).toBeNaN();
+    expect(map.stars[0]!.localRadius).toBe(DEFAULT_LOCAL_RADIUS);
   });
 
   it('fails with storage before any network call when the recovery code cannot be stored', async () => {
