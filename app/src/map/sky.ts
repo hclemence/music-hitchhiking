@@ -6,7 +6,7 @@ export const SKY_MAX = 0.64;
 export const SKY_DESAT = 0.15;
 export const MAX_SKY_REGIONS = 64;
 /** Blend sharpness: weight = (dmin / d) ^ power, so the nearest region dominates everywhere. */
-export const SKY_BLEND_POWER = 16;
+export const SKY_BLEND_POWER = 9;
 export const SKY_BLEND_EPS = 0.05; // in shader units (1000 map units)
 
 /** TS mirror of the shader's region blend (raw, before the fbm shading and grade). `p` is in shader units. */

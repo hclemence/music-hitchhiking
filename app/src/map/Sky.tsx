@@ -37,6 +37,7 @@ export function skyFragment(quality: 'high' | 'low'): string {
   float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
     return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
   float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<OCTAVES;i++){v+=a*noise(p);p*=2.03;a*=.5;}return v;}
+  float fbm2(vec2 p){return .6*noise(p)+.4*noise(p*2.03+3.1);}
   vec3 grade(vec3 c){
     float l=dot(c,vec3(.299,.587,.114));
     c=mix(vec3(l),c,${f(1 - SKY_DESAT)});
@@ -46,7 +47,8 @@ export function skyFragment(quality: 'high' | 'low'): string {
     vec2 p=vMap/${f(SKY_SCALE)};
     float fade=smoothstep(uRadius,uRadius*2.5,distance(vMap,uCentroid));
     float calm=1.-fade;
-    vec2 q=p+calm*.18*vec2(fbm(p*1.5+uTime*.02),fbm(p*1.5+7.+uTime*.018))-calm*.09;
+    vec2 big=calm*.8*(vec2(fbm2(p*1.6+uTime*.01),fbm2(p*1.6+9.3-uTime*.008))-.5);
+    vec2 q=p+big+calm*.18*vec2(fbm(p*1.5+uTime*.02),fbm(p*1.5+7.+uTime*.018))-calm*.09;
     vec3 c=vec3(0.);float w=0.;float dmin=1e9;
     for(int i=0;i<MAX_REGIONS;i++){
       if(i>=uCount)break;
