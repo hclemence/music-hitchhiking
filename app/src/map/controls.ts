@@ -24,6 +24,54 @@ export function createDoubleTap(maxGapMs = 320, maxDistPx = 30) {
   };
 }
 
+type TapPointer = { isPrimary: boolean; pointerId: number; clientX: number; clientY: number; timeStamp: number };
+
+/**
+ * Canvas tap handling for double-tap focus: a primary pointer that goes down and up without
+ * dragging counts as a tap; the second quick tap calls `onDoubleTap` with its client position.
+ */
+export function createTapGesture(onDoubleTap: (x: number, y: number) => void, maxMovePx = 10) {
+  const dt = createDoubleTap();
+  let down: { x: number; y: number; id: number } | null = null;
+  return {
+    down(e: TapPointer) {
+      down = e.isPrimary ? { x: e.clientX, y: e.clientY, id: e.pointerId } : null;
+    },
+    up(e: TapPointer) {
+      if (!e.isPrimary || !down || down.id !== e.pointerId) return;
+      const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+      down = null;
+      if (moved > maxMovePx) return;
+      if (dt.tap(e.timeStamp, e.clientX, e.clientY)) onDoubleTap(e.clientX, e.clientY);
+    },
+  };
+}
+
+export const FOCUS_MS = 450;
+
+/**
+ * The orbit centre's move to a double-tapped star. `focus` starts easing from the current
+ * target; `step` writes the eased target into `out` and reports whether a move is running
+ * (it ends itself on arrival); `cancel` stops it (the current star changed or a flight began).
+ */
+export function createFocus(durationMs = FOCUS_MS) {
+  let ease: { from: THREE.Vector3; to: THREE.Vector3; start: number } | null = null;
+  return {
+    focus(from: THREE.Vector3, to: THREE.Vector3, now: number) {
+      ease = { from: from.clone(), to: to.clone(), start: now };
+    },
+    cancel() { ease = null; },
+    get active() { return ease !== null; },
+    step(now: number, out: THREE.Vector3): boolean {
+      if (!ease) return false;
+      const t = (now - ease.start) / durationMs;
+      out.lerpVectors(ease.from, ease.to, easeInOut(t));
+      if (t >= 1) ease = null;
+      return true;
+    },
+  };
+}
+
 /**
  * Index of the star whose projected screen position is nearest to (px, py) and within
  * `radiusPx`, or -1. `project` maps a star index to CSS-pixel coordinates (null if behind camera).

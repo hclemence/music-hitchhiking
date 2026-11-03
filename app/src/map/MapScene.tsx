@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -9,7 +9,7 @@ import { Dust, Stars } from './Stars.tsx';
 import { ShipModel } from './ShipModel.tsx';
 import { Flight, type FlightState, type Vec3 } from './Flight.tsx';
 import {
-  createDoubleTap, dockedPosition, MAX_DISTANCE, MIN_DISTANCE, pickNearest, shipScale,
+  createFocus, createTapGesture, dockedPosition, MAX_DISTANCE, MIN_DISTANCE, pickNearest, shipScale,
 } from './controls.ts';
 
 export type { FlightState, Vec3 };
@@ -23,6 +23,7 @@ export type MapSceneProps = {
   encounterSongIds: string[];
   /** Tint for your own ship. */
   myShipColour?: string;
+  /** Called after a double-tapped star becomes the camera's focus (the scene focuses either way). */
   onStarDoubleTap?: (songId: string) => void;
   onShipTap?: (dockId: string) => void;
   flight: FlightState | null;
@@ -71,32 +72,26 @@ function DockedShip({
 }
 
 function TapToFocus({
-  positions, ids, onStarDoubleTap,
-}: { positions: Float32Array; ids: string[]; onStarDoubleTap?: (id: string) => void }) {
+  positions, ids, onDoubleTap,
+}: { positions: Float32Array; ids: string[]; onDoubleTap: (id: string) => void }) {
   const { gl, camera, size } = useThree();
-  const cb = useRef(onStarDoubleTap);
-  cb.current = onStarDoubleTap;
+  const cb = useRef(onDoubleTap);
+  cb.current = onDoubleTap;
   useEffect(() => {
     const el = gl.domElement;
-    const dt = createDoubleTap();
     const v = new THREE.Vector3();
-    let down: { x: number; y: number; id: number } | null = null;
-    const onDown = (e: PointerEvent) => { if (!e.isPrimary) { down = null; return; } down = { x: e.clientX, y: e.clientY, id: e.pointerId }; };
-    const onUp = (e: PointerEvent) => {
-      if (!e.isPrimary || !down || down.id !== e.pointerId) return;
-      const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
-      down = null;
-      if (moved > 10) return;
-      if (!dt.tap(e.timeStamp, e.clientX, e.clientY)) return;
+    const gesture = createTapGesture((x, y) => {
       const rect = el.getBoundingClientRect();
-      const px = e.clientX - rect.left, py = e.clientY - rect.top;
+      const px = x - rect.left, py = y - rect.top;
       const i = pickNearest(ids.length, (k) => {
         v.set(positions[k * 3]!, positions[k * 3 + 1]!, positions[k * 3 + 2]!).project(camera);
         if (v.z > 1) return null;
         return { x: (v.x * 0.5 + 0.5) * size.width, y: (-v.y * 0.5 + 0.5) * size.height, depth: v.z };
       }, px, py, PICK_RADIUS_PX);
-      if (i >= 0) cb.current?.(ids[i]!);
-    };
+      if (i >= 0) cb.current(ids[i]!);
+    });
+    const onDown = (e: PointerEvent) => gesture.down(e);
+    const onUp = (e: PointerEvent) => gesture.up(e);
     el.addEventListener('pointerdown', onDown);
     el.addEventListener('pointerup', onUp);
     return () => { el.removeEventListener('pointerdown', onDown); el.removeEventListener('pointerup', onUp); };
@@ -111,6 +106,7 @@ function Scene(props: MapSceneProps) {
   } = props;
   const controls = useRef<Controls>(null);
   const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
 
   const palette = useMemo(() => regionColours(colourSeed, regions), [regions, colourSeed]);
   const buffers = useMemo(() => buildStarBuffers(stars, palette), [stars, palette]);
@@ -122,10 +118,41 @@ function Scene(props: MapSceneProps) {
     return new THREE.Vector3(buffers.positions[i * 3], buffers.positions[i * 3 + 1], buffers.positions[i * 3 + 2]);
   };
   const currentPos = useMemo(() => posOf(currentSongId), [buffers, currentSongId]);
+  // Changes only when the current star or its position does, so a reload keeps a double-tap focus.
+  const currentKey = currentPos ? `${currentSongId}@${currentPos.x},${currentPos.y},${currentPos.z}` : null;
+
+  // Double-tap focus (I1): ease the orbit centre to the tapped star. No hop; it lasts until the
+  // current star changes or a flight starts, which re-centre on the current star.
+  const focus = useMemo(() => createFocus(), []);
+  const focusTarget = useMemo(() => new THREE.Vector3(), []);
+  const flying = useRef(flight !== null);
+  flying.current = flight !== null;
+  const posOfRef = useRef(posOf);
+  posOfRef.current = posOf;
+  const onStarDoubleTapRef = useRef(onStarDoubleTap);
+  onStarDoubleTapRef.current = onStarDoubleTap;
+  const focusStar = useCallback((songId: string) => {
+    const c = controls.current;
+    const to = posOfRef.current(songId);
+    if (c && to && !flying.current) {
+      focus.focus(c.target, to, performance.now());
+      gl.domElement.dataset.focusSongId = songId; // lets the e2e check see the focus
+    }
+    onStarDoubleTapRef.current?.(songId);
+  }, [focus, gl]);
+  useFrame(() => {
+    const c = controls.current;
+    if (!c || !focus.step(performance.now(), focusTarget)) return;
+    camera.position.add(focusTarget).sub(c.target);
+    c.target.copy(focusTarget);
+    c.update();
+  });
 
   // Follow the current star (the flight drives the target itself while it runs).
   const placed = useRef(false);
   useEffect(() => {
+    focus.cancel();
+    delete gl.domElement.dataset.focusSongId;
     const c = controls.current;
     if (!c || !currentPos || flight) return;
     if (!placed.current) {
@@ -136,7 +163,7 @@ function Scene(props: MapSceneProps) {
     }
     c.target.copy(currentPos);
     c.update();
-  }, [currentPos, camera, flight]);
+  }, [currentKey, camera, flight, focus, gl]);
 
   const ships = useMemo(() => {
     const seen = new Set<string>();
@@ -167,7 +194,7 @@ function Scene(props: MapSceneProps) {
         minDistance={MIN_DISTANCE}
         maxDistance={MAX_DISTANCE}
       />
-      <TapToFocus positions={buffers.positions} ids={ids} onStarDoubleTap={onStarDoubleTap} />
+      <TapToFocus positions={buffers.positions} ids={ids} onDoubleTap={focusStar} />
       {ships.map(({ dock, at }, i) => (
         <DockedShip
           key={dock.id} at={at} colour={dock.shipColour} translucent={dock.isSample}

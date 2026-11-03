@@ -63,6 +63,16 @@ test('demo build reaches the map with the network blocked', async ({ page }) => 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: join(SHOTS, 'e2e-demo-03-map.png') });
 
+  // Double-tap focus: the camera orbits the current star, which sits at the canvas centre, so a
+  // double tap there picks a star and makes it the focus. No hop is made.
+  const canvas = page.locator('canvas');
+  const box = (await canvas.boundingBox())!;
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await page.touchscreen.tap(cx, cy);
+  await page.touchscreen.tap(cx, cy);
+  await expect(canvas).toHaveAttribute('data-focus-song-id', /^[0-9a-f-]{36}$/);
+  await expect(here).toHaveText('Stairway to Heaven');
+
   // One hitchhike, to see the flight land.
   const title = (await cards.first().locator('h3').textContent())!;
   await cards.first().getByRole('button', { name: 'Hitchhike' }).click();
