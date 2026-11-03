@@ -4,6 +4,7 @@ import {
   decodeRecoveryCode,
   encodeRecoveryCode,
   recoveryEmail,
+  secretFromBase32,
   secretToBase32,
 } from '@core/recovery.ts';
 import type { PublicDock } from '@core/types.ts';
@@ -14,9 +15,13 @@ import {
 
 export const RECOVERY_CODE_KEY = 'mh.recoveryCode';
 const GET_SONGS_CHUNK = 200;
+const PAGE = 1000;
+/** Server answers that prove the redeem did not happen (so a stored recovery code is useless). */
+const DEFINITIVE_REJECTIONS = new Set(['invalid_invite', 'bad_secret', 'unauthorized']);
 
 type Row = Record<string, unknown>;
 type ErrorLike = { message?: string; code?: string; name?: string; status?: number } | null | undefined;
+type Res<T> = { data: T | null; error: ErrorLike; status?: number };
 
 const CODE_PATTERN = /^[a-z][a-z0-9_]*$/;
 
@@ -24,7 +29,7 @@ function isNetworkError(e: ErrorLike | unknown): boolean {
   if (e instanceof TypeError) return true;
   const x = (e ?? {}) as NonNullable<ErrorLike>;
   if (x.name === 'AuthRetryableFetchError' || x.name === 'FunctionsFetchError') return true;
-  return !x.code && (x.status === 0 || /fetch|network|failed to connect/i.test(x.message ?? ''));
+  return !x.code && (x.status === 0 || /fetch|network|load failed|failed to connect/i.test(x.message ?? ''));
 }
 
 /** RPC errors carry the code as their message (`journey_exists`); fetch failures become `network`. */
@@ -36,14 +41,20 @@ function toBackendError(e: ErrorLike | unknown): BackendError {
   return new BackendError('unknown', x.message);
 }
 
-async function run<T>(op: PromiseLike<{ data: T | null; error: ErrorLike }>): Promise<T> {
-  let res: { data: T | null; error: ErrorLike };
+async function run<T>(op: PromiseLike<Res<T>>): Promise<T> {
+  let res: Res<T>;
   try {
     res = await op;
   } catch (e) {
     throw toBackendError(e);
   }
-  if (res.error) throw toBackendError(res.error);
+  if (res.error) {
+    // postgrest-js reports a failed fetch as status 0 with an empty code and a "TypeError: ..." message.
+    if (res.status === 0 || (!res.error.code && /^TypeError/.test(res.error.message ?? ''))) {
+      throw new BackendError('network');
+    }
+    throw toBackendError(res.error);
+  }
   return res.data as T;
 }
 
@@ -68,10 +79,19 @@ function toHop(r: Row): Hop {
 
 export function createSupabaseBackend(client: SupabaseClient, storage: Storage): Backend {
   const rpc = <T>(fn: string, args?: Record<string, unknown>): Promise<T> =>
-    run<T>(client.rpc(fn, args) as unknown as PromiseLike<{ data: T | null; error: ErrorLike }>);
+    run<T>(client.rpc(fn, args) as unknown as PromiseLike<Res<T>>);
   const select = async (table: string, columns: string, filter?: (q: any) => any): Promise<Row[]> => {
     const q = client.from(table).select(columns);
-    return (await run<Row[]>((filter ? filter(q) : q) as PromiseLike<{ data: Row[] | null; error: ErrorLike }>)) ?? [];
+    return (await run<Row[]>((filter ? filter(q) : q) as PromiseLike<Res<Row[]>>)) ?? [];
+  };
+  /** Every row, in pages, so a server-side max_rows below the table size cannot truncate silently. */
+  const selectAll = async (table: string, columns: string): Promise<Row[]> => {
+    const out: Row[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const page = await select(table, columns, (q) => q.order('id').range(from, from + PAGE - 1));
+      out.push(...page);
+      if (page.length < PAGE) return out;
+    }
   };
 
   async function userId(): Promise<string> {
@@ -97,6 +117,7 @@ export function createSupabaseBackend(client: SupabaseClient, storage: Storage):
       throw toBackendError(e);
     }
     if (res.error) {
+      if (res.error.status === 429) throw new BackendError('rate_limited');
       throw isNetworkError(res.error) ? new BackendError('network') : new BackendError('bad_code');
     }
   }
@@ -126,10 +147,33 @@ export function createSupabaseBackend(client: SupabaseClient, storage: Storage):
     },
 
     async redeemInvite(code) {
-      let sessionRes;
+      // Fail before any network call if the recovery code could not be kept.
       try {
-        sessionRes = await client.auth.getSession();
-        if (!sessionRes.data.session) {
+        storage.setItem(RECOVERY_CODE_KEY + '.probe', '1');
+        storage.removeItem(RECOVERY_CODE_KEY + '.probe');
+      } catch {
+        throw new BackendError('storage');
+      }
+      const stored = storage.getItem(RECOVERY_CODE_KEY);
+
+      let hadSession: boolean;
+      try {
+        hadSession = Boolean((await client.auth.getSession()).data.session);
+      } catch (e) {
+        throw toBackendError(e);
+      }
+      if (!hadSession && stored) {
+        // A fresh session after a lost response: the stored code may already be the member's login.
+        try {
+          await signInWithCode(stored);
+          return { recoveryCode: stored };
+        } catch (e) {
+          // Never replace a stored code while we cannot tell whether it works.
+          if (!(e instanceof BackendError) || e.code !== 'bad_code') throw e;
+        }
+      }
+      try {
+        if (!hadSession) {
           const anon = await client.auth.signInAnonymously();
           if (anon.error) throw anon.error;
         }
@@ -137,22 +181,38 @@ export function createSupabaseBackend(client: SupabaseClient, storage: Storage):
         throw toBackendError(e);
       }
       const id = await userId();
-      const bytes = globalThis.crypto.getRandomValues(new Uint8Array(10));
-      const recoveryCode = encodeRecoveryCode(id, bytes);
-      // Stored BEFORE the call: if the response is lost the code still signs in as the new member.
-      storage.setItem(RECOVERY_CODE_KEY, recoveryCode);
+
+      // Reuse the stored secret for this user: the server may already hold it from a lost response.
+      let recoveryCode: string;
+      let secret: string;
+      const decoded = stored ? decodeRecoveryCode(stored) : null;
+      if (stored && decoded && decoded.userId === id && secretFromBase32(decoded.secret)) {
+        recoveryCode = stored;
+        secret = decoded.secret;
+      } else {
+        const bytes = globalThis.crypto.getRandomValues(new Uint8Array(10));
+        recoveryCode = encodeRecoveryCode(id, bytes);
+        secret = secretToBase32(bytes);
+        // Stored BEFORE the call: if the response is lost the code still signs in as the new member.
+        try {
+          storage.setItem(RECOVERY_CODE_KEY, recoveryCode);
+        } catch {
+          throw new BackendError('storage');
+        }
+      }
 
       let failure: BackendError | null = null;
       try {
-        const res = await client.functions.invoke('redeem-invite', {
-          body: { code, secret: secretToBase32(bytes) },
-        });
+        const res = await client.functions.invoke('redeem-invite', { body: { code, secret } });
         if (res.error) {
           const err = res.error as { name?: string; context?: unknown };
           if (err.name === 'FunctionsHttpError' && err.context instanceof Response) {
             const body = (await err.context.json().catch(() => null)) as { error?: unknown } | null;
-            const c = typeof body?.error === 'string' && CODE_PATTERN.test(body.error) ? body.error : 'unknown';
+            let c = typeof body?.error === 'string' && CODE_PATTERN.test(body.error) ? body.error : 'unknown';
+            if (c === 'unknown' && err.context.status === 401) c = 'unauthorized';
             failure = new BackendError(c);
+          } else if (err.name === 'FunctionsRelayError') {
+            failure = new BackendError('unknown');
           } else {
             failure = toBackendError(err);
           }
@@ -161,21 +221,16 @@ export function createSupabaseBackend(client: SupabaseClient, storage: Storage):
         failure = toBackendError(e);
       }
 
-      if (failure) {
-        if (failure.code !== 'network') {
-          storage.removeItem(RECOVERY_CODE_KEY); // definitively rejected: nothing to recover
-          throw failure;
-        }
-        // Lost response: the redeem may have succeeded. Try the stored code before giving up.
-        try {
-          await signInWithCode(recoveryCode);
-        } catch {
-          throw failure;
-        }
+      // Success, or any failure where the server state is unknown: the stored code may already work.
+      try {
+        await signInWithCode(recoveryCode);
         return { recoveryCode };
+      } catch (signInError) {
+        if (!failure) throw signInError;
       }
-      await signInWithCode(recoveryCode);
-      return { recoveryCode };
+      // Remove the stored code only after a definitive pre-redeem rejection.
+      if (DEFINITIVE_REJECTIONS.has(failure.code)) storage.removeItem(RECOVERY_CODE_KEY);
+      throw failure;
     },
 
     async recover(code) {
@@ -184,9 +239,9 @@ export function createSupabaseBackend(client: SupabaseClient, storage: Storage):
 
     async loadMap() {
       const [stars, docks, regions] = await Promise.all([
-        select('active_stars', '*'),
-        select('public_docks', '*'),
-        select('map_regions', '*'),
+        selectAll('active_stars', '*'),
+        selectAll('public_docks', '*'),
+        selectAll('map_regions', '*'),
       ]);
       return {
         stars: stars.map(toSong),

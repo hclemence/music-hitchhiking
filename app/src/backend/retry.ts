@@ -18,6 +18,16 @@ export interface ActionQueue {
 const KEY = 'mh.queue';
 const DEFAULT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
 
+function isAction(v: unknown): v is QueuedAction {
+  if (!v || typeof v !== 'object') return false;
+  const a = v as Record<string, unknown>;
+  if (typeof a.id !== 'string') return false;
+  return a.kind === 'markInboxSeen' || (a.kind === 'like' && typeof a.dockId === 'string');
+}
+
+/** Transient failures are retried; only known server rejections drop the action. */
+const RETRYABLE_CODES = new Set(['network', 'unknown', 'rate_limited']);
+
 export function createActionQueue(opts: {
   send: (a: QueuedAction) => Promise<void>;
   storage: Storage;
@@ -29,7 +39,7 @@ export function createActionQueue(opts: {
   const load = (): QueuedAction[] => {
     try {
       const v: unknown = JSON.parse(storage.getItem(KEY) ?? '[]');
-      return Array.isArray(v) ? (v as QueuedAction[]) : [];
+      return Array.isArray(v) ? v.filter(isAction) : [];
     } catch {
       return [];
     }
@@ -59,7 +69,7 @@ export function createActionQueue(opts: {
       try {
         await send(head);
       } catch (e) {
-        if (e instanceof BackendError && e.code !== 'network') {
+        if (e instanceof BackendError && !RETRYABLE_CODES.has(e.code)) {
           pending = pending.filter((a) => a.id !== head.id);
           save();
           emit(isOnline, e);

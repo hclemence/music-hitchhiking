@@ -105,6 +105,41 @@ describe('SupabaseBackend', () => {
     expect(await backend.getSession()).toEqual({ isMember: true });
   });
 
+  it('keeps the original recovery code when a lost response is followed by a failed sign-in', async () => {
+    const storage = memoryStorage();
+    let phase: 'lose' | 'online' = 'lose';
+    const client = createClient(stack().url, stack().anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: {
+        fetch: async (input, init) => {
+          const url = String(input instanceof Request ? input.url : input);
+          if (phase === 'lose' && url.includes('grant_type=password')) throw new TypeError('fetch failed');
+          const res = await fetch(input, init);
+          if (phase === 'lose' && url.includes('/functions/v1/redeem-invite')) throw new TypeError('fetch failed');
+          return res;
+        },
+      },
+    });
+    const backend = createSupabaseBackend(client, storage);
+    const invite = await newInvite();
+    const first = await backend.redeemInvite(invite).catch((e) => e);
+    expect(first).toBeInstanceOf(BackendError);
+    expect(first.code).toBe('network');
+    const original = storage.getItem(RECOVERY_CODE_KEY)!;
+    expect(decodeRecoveryCode(original)).not.toBeNull();
+
+    phase = 'online';
+    const { recoveryCode } = await backend.redeemInvite(invite);
+    expect(recoveryCode).toBe(original);
+    expect(storage.getItem(RECOVERY_CODE_KEY)).toBe(original);
+    expect(await backend.getSession()).toEqual({ isMember: true });
+    const id = decodeRecoveryCode(original)!.userId;
+    people.push({ backend, client, storage, recoveryCode, id });
+    const fresh = createSupabaseBackend(anonClient(), memoryStorage());
+    await fresh.recover(original);
+    expect(await fresh.getSession()).toEqual({ isMember: true });
+  });
+
   it('reports an invalid invite as a BackendError and keeps no recovery code', async () => {
     const storage = memoryStorage();
     const backend = createSupabaseBackend(anonClient(), storage);

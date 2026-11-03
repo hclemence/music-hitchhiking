@@ -109,4 +109,31 @@ describe('action queue', () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(fn).not.toHaveBeenCalled();
   });
+
+  it('retries unknown and rate_limited errors and non-BackendError throws', async () => {
+    const send = vi.fn<(a: QueuedAction) => Promise<void>>()
+      .mockRejectedValueOnce(new BackendError('unknown'))
+      .mockRejectedValueOnce(new BackendError('rate_limited'))
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValue(undefined);
+    const q = createActionQueue({ send, storage: memoryStorage(), delays: [10] });
+    const errors: unknown[] = [];
+    q.subscribe((_o, e) => { if (e) errors.push(e); });
+    q.enqueue(like);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(errors).toEqual([]);
+    expect(q.online()).toBe(true);
+  });
+
+  it('discards corrupt persisted entries on load but keeps valid ones', async () => {
+    const storage = memoryStorage();
+    storage.setItem('mh.queue', JSON.stringify([
+      { id: 'x', kind: 'like' }, null, 5, { id: 'y', kind: 'nope' }, like, { id: 'z', kind: 'markInboxSeen' },
+    ]));
+    const sent: string[] = [];
+    createActionQueue({ send: async (a) => { sent.push(a.id); }, storage });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toEqual(['a1', 'z']);
+  });
 });
