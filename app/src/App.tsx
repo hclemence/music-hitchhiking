@@ -95,6 +95,15 @@ function Main() {
   }, []);
   useEffect(() => { void boot(); }, [boot]);
 
+  const afterResume = async () => {
+    try {
+      const p = await backend!.getProfile();
+      setGate(p.homeSongId ? 'ready' : 'onboardShip');
+    } catch {
+      setGate('onboardShip');
+    }
+  };
+
   if (gate === 'loading' || !backend && gate !== 'error') {
     return <main className="center-screen"><p>Loading…</p></main>;
   }
@@ -107,7 +116,7 @@ function Main() {
     );
   }
   if (gate === 'unsavedCode') {
-    return <StartFlow backend={backend} storage={localStore()} resumeCode={resumeCode} onDone={() => setGate('onboardShip')} />;
+    return <StartFlow backend={backend} storage={localStore()} resumeCode={resumeCode} onDone={() => void afterResume()} />;
   }
   if (gate === 'start') {
     return <StartFlow backend={backend} storage={localStore()} onDone={(kind) => setGate(kind === 'new' ? 'onboardShip' : 'ready')} />;
