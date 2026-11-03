@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Region } from '../backend/types.ts';
-import { MAX_SKY_REGIONS, SKY_DESAT, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
+import { MAX_SKY_REGIONS, SKY_BLEND_EPS, SKY_BLEND_POWER, SKY_DESAT, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
 
 /** Plane edge in world units: follows the camera; large enough that the horizon never shows its edge. */
-export const SKY_SIZE = 20000;
+export const SKY_SIZE = 80000;
 /** Map units per shader unit; keeps the blend/warp scale independent of map size. */
 const SKY_SCALE = 1000;
 
@@ -42,11 +42,15 @@ export function skyFragment(quality: 'high' | 'low'): string {
   void main(){
     vec2 p=vMap/${f(SKY_SCALE)};
     vec2 q=p+.18*vec2(fbm(p*1.5+uTime*.02),fbm(p*1.5+7.+uTime*.018))-.09;
-    vec3 c=vec3(0.);float w=0.;
+    vec3 c=vec3(0.);float w=0.;float dmin=1e9;
+    for(int i=0;i<MAX_REGIONS;i++){
+      if(i>=uCount)break;
+      dmin=min(dmin,distance(q,uCentres[i]/${f(SKY_SCALE)}));
+    }
     for(int i=0;i<MAX_REGIONS;i++){
       if(i>=uCount)break;
       float d=distance(q,uCentres[i]/${f(SKY_SCALE)});
-      float k=1./pow(d+.05,3.);
+      float k=pow((dmin+${f(SKY_BLEND_EPS)})/(d+${f(SKY_BLEND_EPS)}),${f(SKY_BLEND_POWER)});
       c+=uColours[i]*k;w+=k;
     }
     c=w>0.?c/w:vec3(${f((SKY_MIN + SKY_MAX) / 2)});

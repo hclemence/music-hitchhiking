@@ -35,9 +35,11 @@ const fragment = /* glsl */ `
   void main() {
     float d = length(gl_PointCoord - vec2(0.5)) * 2.0;
     if (d > 1.0) discard;
-    float core = 1.0 - smoothstep(vCore * 0.75, vCore, d);
-    float band = vRing * smoothstep(vCore, vCore + 0.06, d) * (1.0 - smoothstep(0.9, 1.0, d)) * 0.45;
-    float a = max(core * (0.8 + 0.2 * vBright), band);
+    float dd = d / vCore;
+    float core = 1.0 - smoothstep(0.34, 0.62, dd);
+    float glow = dd < 1.0 ? exp(-dd * dd * 3.5) * (0.55 + 0.35 * vBright) : 0.0;
+    float band = vRing * smoothstep(vCore + 0.02, vCore + 0.08, d) * (1.0 - smoothstep(0.9, 1.0, d)) * 0.45;
+    float a = max(max(core, glow), band);
     if (a < 0.01) discard;
     gl_FragColor = vec4(1.0, 1.0, 1.0, a);
   }

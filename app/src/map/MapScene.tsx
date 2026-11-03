@@ -90,6 +90,16 @@ function TapToFocus({
   return null;
 }
 
+const haloMaterial = new THREE.ShaderMaterial({
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `varying vec2 vUv; void main(){
+    float r = length(vUv - vec2(0.5)) * 2.0;
+    float a = pow(1.0 - smoothstep(0.0, 1.0, r), 2.0) * 0.3;
+    gl_FragColor = vec4(vec3(1.0, 0.97, 0.9) * a, a);
+  }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+
 /** Your shuttle beside its star (or flying on an arc), a fixed apparent size, with a soft halo. */
 function MyShip({
   at, flight, colour, controls, startDistance, onEnd,
@@ -104,6 +114,7 @@ function MyShip({
   const group = useRef<THREE.Group>(null);
   const done = useRef(false);
   const delta = useMemo(() => new THREE.Vector3(), []);
+  const arc = useMemo(() => ({ x: 0, y: 0, h: 0 }), []);
   const yaw = useMemo(() => {
     if (!flight) return DOCKED_YAW;
     const dx = flight.to.x - flight.from.x, dz = flight.to.y - flight.from.y;
@@ -120,7 +131,7 @@ function MyShip({
     let finished = false;
     if (flight) {
       const t = (performance.now() - flight.startedAt) / FLIGHT_MS;
-      const p = arcPoint(flight.from, flight.to, t);
+      const p = arcPoint(flight.from, flight.to, t, arc);
       x = p.x; y = p.y; h = p.h;
       finished = t >= 1;
       if (c) {
@@ -145,9 +156,8 @@ function MyShip({
   return (
     <group ref={group}>
       {/* soft additive halo under the ship (rotated by the group's yaw; it is a disc, so it does not matter) */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.2, 0]} renderOrder={2}>
-        <circleGeometry args={[1.1, 32]} />
-        <meshBasicMaterial color="#fff6dc" transparent opacity={0.22} blending={THREE.AdditiveBlending} depthWrite={false} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.2, 0]} renderOrder={2} material={haloMaterial}>
+        <planeGeometry args={[3.5, 3.5]} />
       </mesh>
       <Shuttle colour={colour} mine />
     </group>
@@ -277,7 +287,7 @@ export function MapScene(props: MapSceneProps) {
   return (
     <Canvas
       dpr={[1, 2]}
-      camera={{ fov: MAP_FOV, near: 1, far: 8000, position: [0, 800, 1100] }}
+      camera={{ fov: MAP_FOV, near: 5, far: 40000, position: [0, 800, 1100] }}
       gl={{ antialias: false, powerPreference: 'high-performance' }}
       style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
     >

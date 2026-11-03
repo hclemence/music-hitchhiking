@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { regionPalette } from '@core/palette.ts';
-import { contrastWithWhite, gradeSkyColour, MAX_SKY_REGIONS, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
+import { blendRegionColours, contrastWithWhite, gradeSkyColour, MAX_SKY_REGIONS, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
 import type { Region } from '../backend/types.ts';
 
 const hex = (h: string): [number, number, number] => {
@@ -67,5 +67,27 @@ describe('skyUniforms', () => {
     palette.forEach((h, i) => {
       hex(h).forEach((v, k) => expect(u.colours[i * 3 + k]!).toBeCloseTo(v, 6));
     });
+  });
+});
+
+describe('blendRegionColours', () => {
+  const regions = [region(0, 0, 0), region(1, 1000, 0), region(2, 0, 1000), region(3, 1000, 1000)];
+  const u = skyUniforms('far', regions);
+  const col = (i: number) => Array.from(u.colours.slice(i * 3, i * 3 + 3));
+  it('is dominated by the nearest region far from every centre, not the average', () => {
+    const two = skyUniforms('far', [region(0, 0, 0), region(1, 1000, 0)]);
+    const c2 = (i: number) => Array.from(two.colours.slice(i * 3, i * 3 + 3));
+    const c = blendRegionColours([3, 0.1], two.centres, two.colours, two.count); // 2000 map units past region 1
+    const near = c2(1);
+    const avg = [0, 1, 2].map((k) => (c2(0)[k]! + c2(1)[k]!) / 2);
+    const dist = (a: number[]) => Math.hypot(a[0]! - c[0], a[1]! - c[1], a[2]! - c[2]);
+    expect(dist(near)).toBeLessThan(0.02);
+    expect(dist(near)).toBeLessThan(dist(avg));
+  });
+  it('is the region colour at a centre and mixes at a border', () => {
+    const at = blendRegionColours([0, 0], u.centres, u.colours, u.count);
+    expect(Math.hypot(...(at.map((v, k) => v - col(0)[k]!) as [number, number, number]))).toBeLessThan(0.02);
+    const mid = blendRegionColours([0.5, 0], u.centres, u.colours, u.count);
+    expect(Math.hypot(...(mid.map((v, k) => v - col(0)[k]!) as [number, number, number]))).toBeGreaterThan(0.01);
   });
 });

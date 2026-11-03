@@ -5,6 +5,28 @@ export const SKY_MIN = 0.17;
 export const SKY_MAX = 0.64;
 export const SKY_DESAT = 0.15;
 export const MAX_SKY_REGIONS = 64;
+/** Blend sharpness: weight = (dmin / d) ^ power, so the nearest region dominates everywhere. */
+export const SKY_BLEND_POWER = 16;
+export const SKY_BLEND_EPS = 0.05; // in shader units (1000 map units)
+
+/** TS mirror of the shader's region blend (raw, before the fbm shading and grade). `p` is in shader units. */
+export function blendRegionColours(
+  p: readonly [number, number], centres: Float32Array, colours: Float32Array, count: number, scale = 1000,
+): [number, number, number] {
+  const d: number[] = [];
+  let dmin = Infinity;
+  for (let i = 0; i < count; i++) {
+    const v = Math.hypot(p[0] - centres[i * 2]! / scale, p[1] - centres[i * 2 + 1]! / scale);
+    d.push(v);
+    dmin = Math.min(dmin, v);
+  }
+  let r = 0, g = 0, b = 0, w = 0;
+  for (let i = 0; i < count; i++) {
+    const k = Math.pow((dmin + SKY_BLEND_EPS) / (d[i]! + SKY_BLEND_EPS), SKY_BLEND_POWER);
+    r += colours[i * 3]! * k; g += colours[i * 3 + 1]! * k; b += colours[i * 3 + 2]! * k; w += k;
+  }
+  return w > 0 ? [r / w, g / w, b / w] : [(SKY_MIN + SKY_MAX) / 2, (SKY_MIN + SKY_MAX) / 2, (SKY_MIN + SKY_MAX) / 2];
+}
 
 type RGB = readonly [number, number, number];
 

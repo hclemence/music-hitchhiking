@@ -14,6 +14,12 @@ describe('arcPoint', () => {
     const mid = arcPoint(from, to, 0.5);
     expect(mid.x).toBeCloseTo(40); expect(mid.y).toBeCloseTo(60);
   });
+  it('writes into a supplied out object and returns it (no allocation)', () => {
+    const out = { x: 0, y: 0, h: 0 };
+    const r = arcPoint(from, to, 0.5, out);
+    expect(r).toBe(out);
+    expect(out.x).toBeCloseTo(40); expect(out.h).toBeCloseTo(10);
+  });
   it('clamps t outside 0..1', () => {
     expect(arcPoint(from, to, 2).x).toBeCloseTo(70);
     expect(arcPoint(from, to, -1).x).toBeCloseTo(10);

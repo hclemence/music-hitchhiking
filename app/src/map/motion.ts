@@ -3,14 +3,14 @@ import { easeInOut } from './controls.ts';
 /** Position along a flight arc: ground (x, y) eased between the stars, plus height `h` above the plane. */
 export function arcPoint(
   from: { x: number; y: number }, to: { x: number; y: number }, t: number,
+  out: { x: number; y: number; h: number } = { x: 0, y: 0, h: 0 },
 ): { x: number; y: number; h: number } {
   const e = easeInOut(t);
   const peak = Math.max(8, 0.1 * Math.hypot(to.x - from.x, to.y - from.y));
-  return {
-    x: from.x + (to.x - from.x) * e,
-    y: from.y + (to.y - from.y) * e,
-    h: peak * Math.sin(Math.PI * e),
-  };
+  out.x = from.x + (to.x - from.x) * e;
+  out.y = from.y + (to.y - from.y) * e;
+  out.h = peak * Math.sin(Math.PI * e);
+  return out;
 }
 
 const RING_CAPACITY = 4096;
