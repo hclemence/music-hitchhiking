@@ -18,9 +18,13 @@ function uuid(): string {
 /** Local date (YYYY-MM-DD) of `now` minus 4 hours, in the given IANA timezone. */
 function dayOf(now: Date, tz: string): string {
   const shifted = new Date(now.getTime() - 4 * 3600 * 1000);
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(shifted);
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(shifted);
+  } catch {
+    throw new BackendError('invalid_time_zone');
+  }
 }
 
 export function createDemoBackend(
@@ -31,7 +35,9 @@ export function createDemoBackend(
   const read = <T>(key: string, fallback: T): T => {
     try {
       const raw = storage.getItem(PREFIX + key);
-      return raw === null ? fallback : (JSON.parse(raw) as T);
+      if (raw === null) return fallback;
+      const v: unknown = JSON.parse(raw);
+      return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as T) : fallback;
     } catch {
       return fallback;
     }
@@ -47,7 +53,7 @@ export function createDemoBackend(
   }));
   const songById = new Map(songs.map((s) => [s.id, s]));
   const requireSong = (id: string): void => {
-    if (!songById.has(id)) throw new BackendError('bad_song');
+    if (!songById.has(id)) throw new BackendError('unknown_song');
   };
 
   let cachedProfile: Profile | null = null;
@@ -162,7 +168,11 @@ export function createDemoBackend(
       saveJourney(day, { ...journey, currentHopId: hopId });
     },
 
-    likeDock: async () => null,
+    async likeDock(dockId) {
+      if (map.docks.some((d) => d.id === dockId)) return null;
+      if (read<Dock | null>('dock', null)?.id === dockId) throw new BackendError('own_dock');
+      throw new BackendError('unknown_dock');
+    },
     getTraces: async () => [],
     findTrace: async () => null,
     sendSuggestion: async () => demoOnly(),

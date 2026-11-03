@@ -60,7 +60,7 @@ describe('session and profile', () => {
     const b = make();
     await b.setHome('song-2');
     expect((await b.getProfile()).homeSongId).toBe('song-2');
-    expect(await code(b.setHome('nope'))).toBe('bad_song');
+    expect(await code(b.setHome('nope'))).toBe('unknown_song');
   });
 });
 
@@ -109,7 +109,7 @@ describe('dock and colour', () => {
     expect((await b.getProfile()).shipColour).toBe(SHIP_COLOURS[2]);
   });
   it('setDock rejects unknown songs', async () => {
-    expect(await code(make().setDock('nope'))).toBe('bad_song');
+    expect(await code(make().setDock('nope'))).toBe('unknown_song');
   });
 });
 
@@ -135,7 +135,7 @@ describe('journeys', () => {
     expect(await code(b.hop(TZ, root, 'song-2', 'start' as 'jump'))).toBe('bad_kind');
     expect(await code(b.hop(TZ, root, 'song-2', 'walk' as 'jump'))).toBe('bad_kind');
     expect(await code(b.hop(TZ, 'missing', 'song-2', 'jump'))).toBe('bad_hop');
-    expect(await code(b.hop(TZ, root, 'nope', 'hitchhike'))).toBe('bad_song');
+    expect(await code(b.hop(TZ, root, 'nope', 'hitchhike'))).toBe('unknown_song');
   });
   it('hop adds a child and moves current; moveTo does not add hops', async () => {
     const b = make();
@@ -180,6 +180,29 @@ describe('journeys', () => {
     const root = (await b.startJourney(TZ, 'song-1')).hops[0];
     clock = new Date('2026-11-04T15:00:00Z');
     expect(await code(b.hop(TZ, root.id, 'song-2', 'jump'))).toBe('bad_hop');
+  });
+});
+
+describe('error codes and storage', () => {
+  it('invalid time zone', async () => {
+    const b = make();
+    expect(await code(b.currentJourney('Mars/Base'))).toBe('invalid_time_zone');
+    expect(await code(b.startJourney('Mars/Base', 'song-1'))).toBe('invalid_time_zone');
+  });
+  it('likeDock own and unknown docks', async () => {
+    const b = make();
+    const id = await b.setDock('song-1');
+    expect(await code(b.likeDock(id))).toBe('own_dock');
+    expect(await code(b.likeDock('nope'))).toBe('unknown_dock');
+  });
+  it('wrong-shaped stored JSON falls back to defaults', async () => {
+    storage.setItem('mh.demo.profile', '"junk"');
+    storage.setItem('mh.demo.journeys', '[1]');
+    storage.setItem('mh.demo.dock', '7');
+    const b = make();
+    expect((await b.getProfile()).shipColour).toBe(SHIP_COLOURS[0]);
+    expect(await b.getMyDock()).toBeNull();
+    expect(await b.currentJourney(TZ)).toBeNull();
   });
 });
 
