@@ -10,6 +10,7 @@ import { Stars } from './Stars.tsx';
 import { Sky } from './Sky.tsx';
 import { Shuttle } from './Shuttle.tsx';
 import { Ships, type MyPose } from './Ships.tsx';
+import { Route } from './Route.tsx';
 import { arcPoint, createQualityMonitor } from './motion.ts';
 import { shipWorldLength } from './shuttle.ts';
 import {
@@ -190,7 +191,7 @@ function MyShip({
 function Scene(props: MapSceneProps) {
   const {
     stars, regions, colourSeed, currentSongId, extraSongs, routeHops, myShipColour,
-    onStarDoubleTap, flight, onFlightEnd, docks, myDockId, parked, arriving, onShipTap,
+    onStarDoubleTap, flight, onFlightEnd, docks, myDockId, parked, arriving, onShipTap, onVisitedTap,
   } = props;
   const controls = useRef<Controls>(null);
   const camera = useThree((s) => s.camera);
@@ -223,6 +224,16 @@ function Scene(props: MapSceneProps) {
   const visited = useMemo(() => new Set(routeHops.map((h) => h.songId)), [routeHops]);
   const buffers = useMemo(() => buildStarBuffers(allStars, visited), [allStars, visited]);
   const ids = useMemo(() => allStars.map((s) => s.id), [allStars]);
+  const visited_ = useMemo(() => {
+    const vi = ids.filter((id) => visited.has(id));
+    const vp = new Float32Array(vi.length * 3);
+    vi.forEach((id, k) => {
+      const i = buffers.indexOf.get(id)!;
+      vp[k * 3] = buffers.positions[i * 3]!; vp[k * 3 + 1] = buffers.positions[i * 3 + 1]!; vp[k * 3 + 2] = buffers.positions[i * 3 + 2]!;
+    });
+    return { ids: vi, positions: vp };
+  }, [ids, visited, buffers]);
+  const shipHit = useRef<((px: number, py: number) => boolean) | null>(null);
 
   const posOf = useCallback((songId: string): { x: number; y: number } | null => {
     const i = buffers.indexOf.get(songId);
@@ -285,6 +296,10 @@ function Scene(props: MapSceneProps) {
       <directionalLight position={[1, 3, 2]} intensity={2.4} />
       <Sky colourSeed={colourSeed} regions={regions} quality={quality} reducedMotion={reducedMotion} />
       <Stars buffers={buffers} refDistance={startDistance} />
+      <Route
+        hops={routeHops} posOf={posOf} visitedIds={visited_.ids} visitedPositions={visited_.positions}
+        shipHit={shipHit} onVisitedTap={onVisitedTap}
+      />
       <MapControls
         ref={controls}
         enableRotate={false}
@@ -306,7 +321,7 @@ function Scene(props: MapSceneProps) {
       <Ships
         docks={docks} myDockId={myDockId} currentSongId={currentSongId} parked={parked} arriving={arriving}
         posOf={posOf} pose={pose} controls={controls} startDistance={startDistance}
-        quality={quality} reducedMotion={reducedMotion} onShipTap={onShipTap}
+        quality={quality} reducedMotion={reducedMotion} onShipTap={onShipTap} shipHit={shipHit}
       />
     </>
   );

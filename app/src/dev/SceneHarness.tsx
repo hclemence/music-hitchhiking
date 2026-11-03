@@ -29,7 +29,17 @@ export function SceneHarness() {
       const dist = (s: Song) => Math.hypot(s.x - s0.x, s.y - s0.y);
       const near = m.stars.filter((s) => s.id !== s0.id).sort((a, b) => dist(a) - dist(b));
       next.current = near.slice(0, 4).map((s) => s.id);
-      setRoute([{ id: 'h0', parentHopId: null, songId: s0.id, kind: 'start', createdAt: new Date().toISOString() }]);
+      // A route with a branch (h1 and h3 both leave h0) and a jump (h4), so the trail look can be checked.
+      const at = new Date().toISOString();
+      const far = m.stars[Math.floor(m.stars.length / 2)]!.id;
+      const [n1, n2, n3] = [near[12], near[24], near[36]].map((s) => s.id);
+      setRoute([
+        { id: 'h0', parentHopId: null, songId: s0.id, kind: 'start', createdAt: at },
+        { id: 'h1', parentHopId: 'h0', songId: n1!, kind: 'hitchhike', createdAt: at },
+        { id: 'h2', parentHopId: 'h1', songId: n2!, kind: 'hitchhike', createdAt: at },
+        { id: 'h3', parentHopId: 'h0', songId: n3!, kind: 'hitchhike', createdAt: at },
+        { id: 'h4', parentHopId: 'h3', songId: far, kind: 'jump', createdAt: at },
+      ]);
       setData(m);
       setCurrent(s0.id);
     });
@@ -67,12 +77,13 @@ export function SceneHarness() {
         onFlightEnd={() => {
           const to = target.current!;
           next.current = next.current.slice(1);
-          setRoute((r) => [...r, { id: `h${r.length}`, parentHopId: r[r.length - 1]!.id, songId: to, kind: 'hitchhike', createdAt: new Date().toISOString() }]);
+          setRoute((r) => [...r, { id: `h${r.length}`, parentHopId: 'h0', songId: to, kind: 'hitchhike', createdAt: new Date().toISOString() }]);
           setCurrent(to);
           setFlight(null);
         }}
         onShipTap={(id) => console.log('ship', id)}
         onStarDoubleTap={(id) => console.log('star', id)}
+        onVisitedTap={(id) => console.log('visited', id)}
       />
       <button
         id="fly" onClick={fly} disabled={!!flight}

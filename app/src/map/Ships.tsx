@@ -33,6 +33,8 @@ export type ShipsProps = {
   quality: 'high' | 'low';
   reducedMotion: boolean;
   onShipTap?: (dockId: string) => void;
+  /** Filled in by the ships layer: is a drawn ship within tap range of this screen point? */
+  shipHit?: React.MutableRefObject<((px: number, py: number) => boolean) | null>;
 };
 
 const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -217,10 +219,20 @@ export function Ships(props: ShipsProps) {
       const id = entries[i]!.dockId;
       gate.tap(ev.clientX, ev.clientY, () => propsRef.current.onShipTap?.(id));
     };
+    const hitRef = propsRef.current.shipHit;
+    if (hitRef) {
+      hitRef.current = (px, py) => pickNearest(entries.length, (k) => {
+        if (entries[k]!.lod === 0) return null;
+        work.proj.set(work.wx[k]!, work.wy[k]!, work.wz[k]!).project(camera);
+        if (work.proj.z > 1) return null;
+        return { x: (work.proj.x * 0.5 + 0.5) * el.clientWidth, y: (-work.proj.y * 0.5 + 0.5) * el.clientHeight, depth: work.proj.z };
+      }, px, py, TAP_RADIUS_PX) >= 0;
+    }
     el.addEventListener('pointerdown', onDown);
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointercancel', onCancel);
     return () => {
+      if (hitRef) hitRef.current = null;
       gate.dispose();
       el.removeEventListener('pointerdown', onDown);
       el.removeEventListener('pointerup', onUp);

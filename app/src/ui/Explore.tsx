@@ -6,6 +6,7 @@ import { useExplore, type ExploreModel, type ShownEncounter } from '../state/use
 import { EncounterBar } from './EncounterBar.tsx';
 import { MiniMap } from './MiniMap.tsx';
 import { OfflineBanner } from './OfflineBanner.tsx';
+import { latestHopAtSong } from '../map/route.ts';
 
 export type Screen = 'explore' | 'history' | 'inbox' | 'ship' | 'dock';
 
@@ -107,6 +108,10 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           parked={NO_PARKED}
           arriving={null}
           flight={x.flight}
+          onVisitedTap={(songId) => {
+            const hopId = latestHopAtSong(x.hops, songId);
+            if (hopId && !busy && hopId !== x.currentHopId) x.actions.moveTo(hopId);
+          }}
           onFlightEnd={x.actions.endFlight}
           onShipTap={(dockId) => {
             if (x.hereDocks.some((d) => d.id === dockId)) {
