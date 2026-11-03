@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { stack } from '../tests/integration/stack.ts';
 import type { SampleMap } from './sample-map.ts';
 
 /** Upsert in chunks so a request body stays small. */
 async function upsertChunks(
-  db: ReturnType<typeof createClient>,
+  db: SupabaseClient,
   table: string,
   rows: Record<string, unknown>[],
 ): Promise<void> {
