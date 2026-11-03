@@ -181,8 +181,14 @@ uniform vec2 uResolution;
 uniform float uWidthPx;
 uniform float uPixelRatio;
 void main() {
-  vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  vec3 n = normalize(normalMatrix * normal);
+  vec4 lp = vec4(position, 1.0);
+  vec3 nn = normal;
+#ifdef USE_INSTANCING
+  lp = instanceMatrix * lp;
+  nn = mat3(instanceMatrix) * nn;
+#endif
+  vec4 clip = projectionMatrix * modelViewMatrix * lp;
+  vec3 n = normalize(normalMatrix * nn);
   vec2 dir = (projectionMatrix * vec4(n, 0.0)).xy * uResolution;
   float len = length(dir);
   dir = len > 1e-6 ? dir / len : vec2(0.0);

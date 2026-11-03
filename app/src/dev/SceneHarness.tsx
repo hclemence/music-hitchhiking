@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createDemoBackend } from '../backend/demo.ts';
 import type { Hop, Region, Song, PublicDock } from '../backend/types.ts';
+import type { ShownEncounter } from '../state/useExplore.ts';
 import sampleMap from '../../../data/sample-map.json';
 import { MapScene, type FlightState } from '../map/MapScene.tsx';
 
@@ -10,6 +11,8 @@ export function SceneHarness() {
   const [current, setCurrent] = useState<string | null>(null);
   const [flight, setFlight] = useState<FlightState | null>(null);
   const [route, setRoute] = useState<Hop[]>([]);
+  const [parked, setParked] = useState<ShownEncounter[]>([]);
+  const [arriving, setArriving] = useState<{ dockId: string; startedAt: number } | null>(null);
   const target = useRef<string | null>(null);
   const next = useRef<string[]>([]);
 
@@ -40,12 +43,27 @@ export function SceneHarness() {
     const a = pos(current), b = pos(to);
     setFlight({ from: { x: a.x, y: a.y, z: 0 }, to: { x: b.x, y: b.y, z: 0 }, startedAt: performance.now() });
   };
+  // A dock at some other star, not already parked or arriving, for the park / arrive buttons.
+  const pickDock = (): ShownEncounter | null => {
+    const used = new Set([...parked.map((p) => p.dock.id), arriving?.dockId]);
+    const d = data.docks.find((k) => k.songId !== current && !used.has(k.id));
+    if (!d) return null;
+    const song = pos(d.songId);
+    return { songId: d.songId, dock: d, othersCount: 0, distance: 0, song };
+  };
+  const park = () => { const e = pickDock(); if (e && parked.length < 4) setParked((p) => [...p, e]); };
+  const arrive = () => {
+    const e = pickDock();
+    if (!e) return;
+    setArriving({ dockId: e.dock.id, startedAt: performance.now() });
+    setTimeout(() => { setParked((p) => [...p, e]); setArriving(null); }, 1200);
+  };
   return (
     <div style={{ position: 'fixed', inset: 0, overflow: 'hidden' }}>
       <MapScene
         stars={data.stars} regions={data.regions} docks={data.docks} colourSeed="dev-seed"
         currentSongId={current} myDockId={null} myShipColour="#ffd166"
-        routeHops={route} extraSongs={NO_EXTRA} parked={[]} arriving={null} flight={flight}
+        routeHops={route} extraSongs={NO_EXTRA} parked={parked} arriving={arriving} flight={flight}
         onFlightEnd={() => {
           const to = target.current!;
           next.current = next.current.slice(1);
@@ -62,6 +80,8 @@ export function SceneHarness() {
       >
         Fly
       </button>
+      <button id="park" onClick={park} style={{ position: 'absolute', bottom: 24, left: 12, padding: '12px' }}>Park</button>
+      <button id="arrive" onClick={arrive} style={{ position: 'absolute', bottom: 24, right: 12, padding: '12px' }}>Arrive</button>
     </div>
   );
 }

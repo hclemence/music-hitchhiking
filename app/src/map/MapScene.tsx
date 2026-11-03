@@ -9,6 +9,7 @@ import { buildStarBuffers } from './stars.ts';
 import { Stars } from './Stars.tsx';
 import { Sky } from './Sky.tsx';
 import { Shuttle } from './Shuttle.tsx';
+import { Ships, type MyPose } from './Ships.tsx';
 import { arcPoint, createQualityMonitor } from './motion.ts';
 import { shipWorldLength } from './shuttle.ts';
 import {
@@ -102,7 +103,7 @@ const haloMaterial = new THREE.ShaderMaterial({
 
 /** Your shuttle beside its star (or flying on an arc), a fixed apparent size, with a soft halo. */
 function MyShip({
-  at, flight, colour, controls, startDistance, onEnd,
+  at, flight, colour, controls, startDistance, onEnd, pose,
 }: {
   at: { x: number; y: number };
   flight: FlightState | null;
@@ -110,6 +111,7 @@ function MyShip({
   controls: React.RefObject<Controls | null>;
   startDistance: number;
   onEnd: () => void;
+  pose: React.RefObject<MyPose>;
 }) {
   const group = useRef<THREE.Group>(null);
   const done = useRef(false);
@@ -147,6 +149,8 @@ function MyShip({
     g.scale.setScalar(len);
     g.position.set(x + DOCK_OFFSET.x * len, h + len * 0.25, y + DOCK_OFFSET.z * len);
     g.rotation.y = yaw;
+    const ps = pose.current;
+    ps.x = g.position.x; ps.y = g.position.z; ps.h = h; ps.len = len;
     if (finished && !done.current) {
       done.current = true;
       onEndRef.current();
@@ -167,7 +171,7 @@ function MyShip({
 function Scene(props: MapSceneProps) {
   const {
     stars, regions, colourSeed, currentSongId, extraSongs, routeHops, myShipColour,
-    onStarDoubleTap, flight, onFlightEnd,
+    onStarDoubleTap, flight, onFlightEnd, docks, myDockId, parked, arriving, onShipTap,
   } = props;
   const controls = useRef<Controls>(null);
   const camera = useThree((s) => s.camera);
@@ -201,12 +205,13 @@ function Scene(props: MapSceneProps) {
   const buffers = useMemo(() => buildStarBuffers(allStars, visited), [allStars, visited]);
   const ids = useMemo(() => allStars.map((s) => s.id), [allStars]);
 
-  const posOf = (songId: string): { x: number; y: number } | null => {
+  const posOf = useCallback((songId: string): { x: number; y: number } | null => {
     const i = buffers.indexOf.get(songId);
     if (i === undefined) return null;
     return { x: buffers.positions[i * 3]!, y: buffers.positions[i * 3 + 2]! };
-  };
-  const currentPos = useMemo(() => posOf(currentSongId), [buffers, currentSongId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [buffers]);
+  const currentPos = useMemo(() => posOf(currentSongId), [posOf, currentSongId]);
+  const pose = useRef<MyPose>({ x: 0, y: 0, h: 0, len: 1 });
   // Changes only when the current star or its position does, so a reload keeps a double-tap focus.
   const currentKey = currentPos ? `${currentSongId}@${currentPos.x},${currentPos.y}` : null;
 
@@ -276,9 +281,14 @@ function Scene(props: MapSceneProps) {
         <MyShip
           key={flight ? flight.startedAt : 'docked'}
           at={currentPos} flight={flight} colour={myShipColour} controls={controls}
-          startDistance={startDistance} onEnd={() => onFlightEnd?.()}
+          startDistance={startDistance} onEnd={() => onFlightEnd?.()} pose={pose}
         />
       )}
+      <Ships
+        docks={docks} myDockId={myDockId} currentSongId={currentSongId} parked={parked} arriving={arriving}
+        posOf={posOf} pose={pose} controls={controls} startDistance={startDistance}
+        quality={quality} reducedMotion={reducedMotion} onShipTap={onShipTap}
+      />
     </>
   );
 }

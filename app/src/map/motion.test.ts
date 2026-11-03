@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { arcPoint, createQualityMonitor } from './motion.ts';
+import { ambientOffset, arcPoint, createQualityMonitor, fanSlot, parkingSlot, selectShipLod } from './motion.ts';
 
 describe('arcPoint', () => {
   const from = { x: 10, y: 20 }, to = { x: 70, y: 100 };
@@ -49,5 +49,73 @@ describe('createQualityMonitor', () => {
   it('honours custom threshold and window', () => {
     const m = createQualityMonitor({ thresholdMs: 10, windowMs: 1000 });
     expect(feed(m, 1100, 12)).toBe('low');
+  });
+});
+
+describe('ambientOffset', () => {
+  it('is deterministic per id and differs between ids', () => {
+    expect(ambientOffset('a', 12345)).toEqual(ambientOffset('a', 12345));
+    expect(ambientOffset('a', 12345)).not.toEqual(ambientOffset('b', 12345));
+  });
+  it('stays bounded: loop <= 3, bob <= 0.6, drift <= 15', () => {
+    let maxR = 0, maxH = 0;
+    for (let t = 0; t < 180000; t += 100) {
+      const o = ambientOffset('dock-1', t);
+      maxR = Math.max(maxR, Math.hypot(o.dx, o.dy));
+      maxH = Math.max(maxH, Math.abs(o.dh));
+    }
+    expect(maxR).toBeLessThanOrEqual(3 + 15 + 1e-6);
+    expect(maxH).toBeLessThanOrEqual(0.6 + 1e-6);
+  });
+  it('drifts out beyond the loop at least once in any 60 s window', () => {
+    for (const id of ['a', 'b', 'c', 'dock-99']) {
+      for (let start = 0; start < 120000; start += 7000) {
+        let far = 0;
+        for (let t = start; t < start + 60000; t += 50) {
+          const o = ambientOffset(id, t);
+          far = Math.max(far, Math.hypot(o.dx, o.dy));
+        }
+        expect(far).toBeGreaterThan(8);
+      }
+    }
+  });
+  it('does not allocate-share: returns an object usable with an out param', () => {
+    const out = { dx: 0, dy: 0, dh: 0 };
+    expect(ambientOffset('a', 5, out)).toBe(out);
+  });
+});
+
+describe('slots', () => {
+  const distinct = (pts: { dx: number; dy: number }[]) =>
+    new Set(pts.map((p) => `${p.dx.toFixed(3)},${p.dy.toFixed(3)}`)).size;
+  it('fanSlot gives 5 distinct slots, slot 0 beside the star', () => {
+    const s = [0, 1, 2, 3, 4].map(fanSlot);
+    expect(distinct(s)).toBe(5);
+    expect(s[0]!.dx).toBeGreaterThan(0);
+  });
+  it('parkingSlot gives 4 distinct slots', () => {
+    expect(distinct([0, 1, 2, 3].map(parkingSlot))).toBe(4);
+  });
+});
+
+describe('selectShipLod', () => {
+  const view = { x: 0, y: 0, halfWidth: 100, halfHeight: 100 };
+  it('culls outside the view rect (+10% margin)', () => {
+    const r = selectShipLod([
+      { dockId: 'in', x: 50, y: 50 }, { dockId: 'edge', x: 105, y: 0 }, { dockId: 'out', x: 200, y: 0 },
+    ], view);
+    expect([...r.full, ...r.simple].sort()).toEqual(['edge', 'in']);
+  });
+  it('gives the nearest maxFull the full model, sorted by distance, the rest simple', () => {
+    const ships = Array.from({ length: 10 }, (_, i) => ({ dockId: `s${i}`, x: (9 - i) * 5, y: 0 }));
+    const r = selectShipLod(ships, view, 3);
+    expect(r.full).toEqual(['s9', 's8', 's7']);
+    expect(r.simple.length).toBe(7);
+  });
+  it('defaults to 150 full', () => {
+    const ships = Array.from({ length: 200 }, (_, i) => ({ dockId: `s${i}`, x: (i % 20) * 4, y: Math.floor(i / 20) * 4 }));
+    const r = selectShipLod(ships, view);
+    expect(r.full.length).toBe(150);
+    expect(r.simple.length).toBe(50);
   });
 });
