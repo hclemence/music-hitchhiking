@@ -45,6 +45,32 @@ export function createTapGesture(onDoubleTap: (x: number, y: number) => void, ma
   };
 }
 
+/**
+ * Defers a ship tap so a double-tap (star focus) can cancel it. `down` is called on every pointerdown:
+ * if a ship tap is waiting and this press is close to it, the waiting tap is dropped and `down`
+ * returns true (this press is the second tap, so it must not schedule another); a far-away press
+ * fires the waiting tap at once.
+ */
+export function createShipTapGate(delayMs = 320, maxDistPx = 30) {
+  let pending: { x: number; y: number; fn: () => void; timer: ReturnType<typeof setTimeout> } | null = null;
+  const take = () => { const p = pending; pending = null; if (p) clearTimeout(p.timer); return p; };
+  return {
+    down(x: number, y: number): boolean {
+      const p = take();
+      if (!p) return false;
+      if (Math.hypot(x - p.x, y - p.y) <= maxDistPx) return true;
+      p.fn();
+      return false;
+    },
+    tap(x: number, y: number, fn: () => void) {
+      take();
+      const timer = setTimeout(() => { pending = null; fn(); }, delayMs);
+      pending = { x, y, fn, timer };
+    },
+    dispose() { take(); },
+  };
+}
+
 export const FOCUS_MS = 450;
 
 /**

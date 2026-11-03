@@ -77,7 +77,6 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
   const homeId = x.profile?.homeSongId ?? null;
   const map = x.map!;
   const current = x.current;
-  const encounterSongIds = x.encounters.map((e) => e.songId);
   // The current song may not be one of the map's stars (Review Focus 3): add it so the camera and ship go there.
   const stars = useMemo(
     () => (current && !map.stars.some((s) => s.id === current.id) ? [...map.stars, current] : map.stars),
@@ -100,7 +99,6 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           docks={map.docks}
           colourSeed={x.profile!.colourSeed}
           currentSongId={current.id}
-          encounterSongIds={encounterSongIds}
           hereDocks={x.hereDocks}
           myDockId={x.myDock?.id ?? null}
           myShipColour={x.profile!.shipColour}

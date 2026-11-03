@@ -181,14 +181,16 @@ uniform vec2 uResolution;
 uniform float uWidthPx;
 uniform float uPixelRatio;
 void main() {
-  vec4 lp = vec4(position, 1.0);
-  vec3 nn = normal;
+  mat4 mvm = modelViewMatrix;
 #ifdef USE_INSTANCING
-  lp = instanceMatrix * lp;
-  nn = mat3(instanceMatrix) * nn;
+  mvm = modelViewMatrix * instanceMatrix;
 #endif
-  vec4 clip = projectionMatrix * modelViewMatrix * lp;
-  vec3 n = normalize(normalMatrix * nn);
+  vec4 mv = mvm * vec4(position, 1.0);
+  // Push the shell back by a few percent of the ship's length so the paint always wins the depth
+  // test (thin wings and fins would otherwise speckle through).
+  mv.z -= 0.05 * length(mvm[0].xyz);
+  vec4 clip = projectionMatrix * mv;
+  vec3 n = normalize(mat3(mvm) * normal);
   vec2 dir = (projectionMatrix * vec4(n, 0.0)).xy * uResolution;
   float len = length(dir);
   dir = len > 1e-6 ? dir / len : vec2(0.0);

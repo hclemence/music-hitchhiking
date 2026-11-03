@@ -39,8 +39,7 @@ export type MapSceneProps = {
   onStarDoubleTap?: (songId: string) => void;
   onShipTap?: (dockId: string) => void;
   onVisitedTap?: (songId: string) => void;
-  /** Legacy: the old encounter flow still passes these; the scene ignores them (Task 6/8 replace them). */
-  encounterSongIds?: string[];
+  /** Passed by Explore for its Docked-here card; the scene ignores it (the ships layer draws every dock). */
   hereDocks?: PublicDock[];
 };
 
@@ -51,6 +50,7 @@ const POLAR = Math.PI / 2 - PITCH;
 const VIEW_DIR = new THREE.Vector3(0, Math.sin(PITCH), Math.cos(PITCH));
 /** Where your ship sits beside its star, in ship lengths (right and slightly up-screen). */
 const DOCK_OFFSET = { x: 0.95, z: -0.45 };
+const LIFT_LOCAL = 0.25; // the ship floats this far (in lengths) above the plane
 const DOCKED_YAW = Math.atan2(-1, 0.35);
 
 type Controls = React.ComponentRef<typeof MapControls>;
@@ -95,8 +95,21 @@ const haloMaterial = new THREE.ShaderMaterial({
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: `varying vec2 vUv; void main(){
     float r = length(vUv - vec2(0.5)) * 2.0;
-    float a = pow(1.0 - smoothstep(0.0, 1.0, r), 2.0) * 0.3;
+    float a = pow(1.0 - smoothstep(0.0, 1.0, r), 2.0) * 0.6;
     gl_FragColor = vec4(vec3(1.0, 0.97, 0.9) * a, a);
+  }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+
+/** A soft white ring on the plane under your ship that breathes (2 s), so you can always find it. */
+const ringMaterial = new THREE.ShaderMaterial({
+  uniforms: { uPulse: { value: 0 } },
+  vertexShader: haloMaterial.vertexShader,
+  fragmentShader: `varying vec2 vUv; uniform float uPulse; void main(){
+    float r = length(vUv - vec2(0.5)) * 2.0;
+    float band = smoothstep(0.55, 0.88, r) * (1.0 - smoothstep(0.88, 1.0, r));
+    float a = band * (0.35 + 0.35 * uPulse) + (1.0 - smoothstep(0.0, 0.9, r)) * 0.08;
+    gl_FragColor = vec4(vec3(1.0) * a, a);
   }`,
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
 });
@@ -113,6 +126,7 @@ function MyShip({
   onEnd: () => void;
   pose: React.RefObject<MyPose>;
 }) {
+  const reduced = useMemo(prefersReducedMotion, []);
   const group = useRef<THREE.Group>(null);
   const done = useRef(false);
   const delta = useMemo(() => new THREE.Vector3(), []);
@@ -149,6 +163,7 @@ function MyShip({
     g.scale.setScalar(len);
     g.position.set(x + DOCK_OFFSET.x * len, h + len * 0.25, y + DOCK_OFFSET.z * len);
     g.rotation.y = yaw;
+    ringMaterial.uniforms.uPulse!.value = 0.5 + 0.5 * Math.sin((performance.now() / 2000) * Math.PI * 2 * (reduced ? 0.25 : 1));
     const ps = pose.current;
     ps.x = g.position.x; ps.y = g.position.z; ps.h = h; ps.len = len;
     if (finished && !done.current) {
@@ -161,7 +176,11 @@ function MyShip({
     <group ref={group}>
       {/* soft additive halo under the ship (rotated by the group's yaw; it is a disc, so it does not matter) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.2, 0]} renderOrder={2} material={haloMaterial}>
-        <planeGeometry args={[3.5, 3.5]} />
+        <planeGeometry args={[4.5, 4.5]} />
+      </mesh>
+      {/* breathing ring on the ground plane, radius 2.5 ship lengths */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -LIFT_LOCAL, 0]} renderOrder={1} material={ringMaterial}>
+        <planeGeometry args={[5, 5]} />
       </mesh>
       <Shuttle colour={colour} mine />
     </group>
@@ -262,8 +281,8 @@ function Scene(props: MapSceneProps) {
   return (
     <>
       <color attach="background" args={['#232a44']} />
-      <ambientLight intensity={0.9} />
-      <directionalLight position={[1, 3, 2]} intensity={2} />
+      <ambientLight intensity={0.55} />
+      <directionalLight position={[1, 3, 2]} intensity={2.4} />
       <Sky colourSeed={colourSeed} regions={regions} quality={quality} reducedMotion={reducedMotion} />
       <Stars buffers={buffers} refDistance={startDistance} />
       <MapControls
@@ -298,7 +317,7 @@ export function MapScene(props: MapSceneProps) {
     <Canvas
       dpr={[1, 2]}
       camera={{ fov: MAP_FOV, near: 5, far: 40000, position: [0, 800, 1100] }}
-      gl={{ antialias: false, powerPreference: 'high-performance' }}
+      gl={{ antialias: true, powerPreference: 'high-performance' }}
       style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
     >
       <Scene {...props} />

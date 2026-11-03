@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { seededRng } from '@core/rng.ts';
 import type { PublicDock } from '@core/types.ts';
 import type { ShownEncounter } from '../state/useExplore.ts';
-import {
-  ambientOffset, arcPoint, fanSlot, MAX_FAN, parkingSlot, selectShipLod,
-} from './motion.ts';
-import { buildShuttle, buildSimpleShuttle, createOutlineMaterial, shipWorldLength } from './shuttle.ts';
-import { MAP_FOV, pickNearest } from './controls.ts';
+import { ambientOffset, arcPoint, fanSlot, parkingSlot, selectShipLod } from './motion.ts';
+import { shipWorldLength } from './shuttle.ts';
+import { createShipTapGate, MAP_FOV, pickNearest } from './controls.ts';
+import { buildEntries, type Entry } from './shipEntries.ts';
+import { buildSets } from './shipSets.ts';
 
 /** Where your own ship is this frame (ground x/y, height h, ship length), written by MyShip. */
 export type MyPose = { x: number; y: number; h: number; len: number };
@@ -16,30 +15,10 @@ export type MyPose = { x: number; y: number; h: number; len: number };
 export const FLY_IN_MS = 1200;
 const RESELECT_MS = 250;
 const TAP_RADIUS_PX = 24;
-const SAMPLE_OPACITY = 0.5;
 const LOW_MAX_FULL = 40;
 const MAX_FULL = 150;
-const GLASS = '#1d3048';
-const GLOW = '#fff0c2';
 const LIFT = 0.25; // ship centre above the plane, in lengths
 const DRIFT_SPEED = 3.5; // units/s above which a ship turns to face where it is going
-
-type Kind = 0 | 1 | 2; // fan | parked | arriving
-type Entry = {
-  dockId: string;
-  colour: string;
-  sample: boolean;
-  kind: Kind;
-  star: { x: number; y: number };
-  fan: number; // slot index at the star
-  park: number; // parking slot beside you
-  startedAt: number;
-  baseYaw: number;
-  yaw: number;
-  lod: 0 | 1 | 2; // culled | full | simple
-  set: number; // index into the instanced sets
-  inst: number; // instance index inside the set
-};
 
 export type ShipsProps = {
   docks: PublicDock[];
@@ -56,135 +35,23 @@ export type ShipsProps = {
   onShipTap?: (dockId: string) => void;
 };
 
-function makeEntry(dockId: string, colour: string, sample: boolean, kind: Kind, star: { x: number; y: number }): Entry {
-  const yaw = seededRng(`heading:${dockId}`)() * Math.PI * 2;
-  return { dockId, colour, sample, kind, star, fan: 0, park: 0, startedAt: 0, baseYaw: yaw, yaw, lod: 0, set: 0, inst: 0 };
-}
-
-/** Every ship the layer may draw: top docks per star (newest first), parked and arriving encounters. */
-export function buildEntries(
-  docks: PublicDock[], myDockId: string | null, currentSongId: string, parked: ShownEncounter[],
-  arriving: { dockId: string; startedAt: number } | null,
-  posOf: (songId: string) => { x: number; y: number } | null,
-): Entry[] {
-  const away = new Set<string>(parked.map((p) => p.dock.id));
-  if (arriving) away.add(arriving.dockId);
-  const bySong = new Map<string, PublicDock[]>();
-  for (const d of docks) {
-    if (d.id === myDockId) continue;
-    let a = bySong.get(d.songId);
-    if (!a) bySong.set(d.songId, (a = []));
-    a.push(d);
-  }
-  const out: Entry[] = [];
-  let arrivingEntry: Entry | null = null;
-  for (const [songId, group] of bySong) {
-    const star = posOf(songId);
-    if (!star) continue;
-    group.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : a.id < b.id ? -1 : 1));
-    const shift = songId === currentSongId ? 1 : 0; // your own ship takes the first slot at your star
-    group.forEach((d, rank) => {
-      const fan = rank + shift;
-      if (arriving && d.id === arriving.dockId) {
-        arrivingEntry = makeEntry(d.id, d.shipColour, d.isSample, 2, star);
-        arrivingEntry.fan = fan;
-        arrivingEntry.startedAt = arriving.startedAt;
-        return;
-      }
-      if (away.has(d.id) || fan >= MAX_FAN) return;
-      const e = makeEntry(d.id, d.shipColour, d.isSample, 0, star);
-      e.fan = fan;
-      out.push(e);
-    });
-  }
-  const home = posOf(currentSongId) ?? { x: 0, y: 0 };
-  parked.forEach((p, k) => {
-    if (arriving && p.dock.id === arriving.dockId) return; // flying in; it parks when it lands
-    const e = makeEntry(p.dock.id, p.dock.shipColour, p.dock.isSample, 1, home);
-    e.park = k;
-    out.push(e);
-  });
-  const ae = arrivingEntry as Entry | null;
-  if (ae) {
-    ae.park = Math.max(0, parked.findIndex((p) => p.dock.id === ae.dockId));
-    if (!parked.some((p) => p.dock.id === ae.dockId)) ae.park = parked.length;
-    out.push(ae);
-  }
-  return out;
-}
-
-type Part = THREE.InstancedMesh;
-type ShipSet = { meshes: Part[]; paint: Part; count: number; full: boolean };
-
-/** 4 sets: [full real, full sample, simple real, simple sample]. Matrix attribute shared by a set's parts. */
-function buildSets(capacity: number) {
-  const full = buildShuttle();
-  const simple = buildSimpleShuttle();
-  const disposables: { dispose(): void }[] = [full.paint, full.glass, full.glow, full.outline, simple.paint, simple.outline];
-  const group = new THREE.Group();
-  const sets: ShipSet[] = [];
-  const outlines = [createOutlineMaterial(), createOutlineMaterial()];
-  outlines[1]!.uniforms.uOpacity!.value = SAMPLE_OPACITY;
-  outlines[1]!.transparent = true;
-  const prepassMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true });
-  disposables.push(...outlines, prepassMat);
-  const mk = (geo: THREE.BufferGeometry, mat: THREE.Material, matrix: THREE.InstancedBufferAttribute | null) => {
-    const m = new THREE.InstancedMesh(geo, mat, capacity);
-    if (matrix) m.instanceMatrix = matrix;
-    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    m.frustumCulled = false;
-    m.count = 0;
-    group.add(m);
-    return m;
-  };
-  for (const lod of ['full', 'simple'] as const) {
-    for (const sample of [false, true]) {
-      const o = sample ? SAMPLE_OPACITY : 1;
-      const tr = sample;
-      const paintMat = new THREE.MeshStandardMaterial({
-        color: '#ffffff', roughness: 0.5, metalness: 0.2, flatShading: true, transparent: tr, opacity: o, depthWrite: !tr,
-      });
-      disposables.push(paintMat);
-      const geo = lod === 'full' ? full : simple;
-      const paint = mk(geo.paint, paintMat, null);
-      paint.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
-      paint.instanceColor.setUsage(THREE.DynamicDrawUsage);
-      const meshes = [paint];
-      const shared = paint.instanceMatrix;
-      if (tr) {
-        // Translucent ships: a colourless depth pre-pass so only the nearest hull surface blends (no see-through insides).
-        const pre = mk(geo.paint, prepassMat, shared);
-        pre.renderOrder = -1;
-        meshes.push(pre);
-        paintMat.depthWrite = true;
-      }
-      const outline = mk(geo.outline, outlines[sample ? 1 : 0]!, shared);
-      outline.renderOrder = 1;
-      meshes.push(outline);
-      if (lod === 'full') {
-        const glassMat = new THREE.MeshStandardMaterial({
-          color: GLASS, emissive: '#4a8cc4', emissiveIntensity: 0.6, roughness: 0.1, metalness: 0.2,
-          transparent: tr, opacity: o, depthWrite: !tr,
-        });
-        const glowMat = new THREE.MeshBasicMaterial({ color: GLOW, side: THREE.DoubleSide, transparent: tr, opacity: o });
-        disposables.push(glassMat, glowMat);
-        meshes.push(mk(full.glass, glassMat, shared), mk(full.glow, glowMat, shared));
-      }
-      sets.push({ meshes, paint, count: 0, full: lod === 'full' });
-    }
-  }
-  return { group, sets, dispose: () => { disposables.forEach((d) => d.dispose()); group.clear(); } };
-}
-
 const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 export function Ships(props: ShipsProps) {
   const { docks, myDockId, currentSongId, parked, arriving, posOf, quality, reducedMotion } = props;
   const { gl, camera } = useThree();
 
+  // Rebuild entries only when what they depend on changes, not when the arrays are re-created.
+  const contentKey = [
+    myDockId, currentSongId, arriving ? `${arriving.dockId}@${arriving.startedAt}` : '',
+    parked.map((q) => q.dock.id).join(','),
+    docks.map((d) => `${d.id}:${d.songId}:${d.updatedAt}:${d.shipColour}:${d.isSample ? 1 : 0}`).join('|'),
+  ].join('#');
+  const latest = useRef({ docks, parked, arriving });
+  latest.current = { docks, parked, arriving };
   const entries = useMemo(
-    () => buildEntries(docks, myDockId, currentSongId, parked, arriving, posOf),
-    [docks, myDockId, currentSongId, parked, arriving, posOf],
+    () => buildEntries(latest.current.docks, myDockId, currentSongId, latest.current.parked, latest.current.arriving, posOf),
+    [contentKey, posOf], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const capacity = Math.max(1, entries.length);
   const built = useMemo(() => buildSets(capacity), [capacity]);
@@ -318,21 +185,24 @@ export function Ships(props: ShipsProps) {
     if (touched) for (const s of built.sets) s.paint.instanceMatrix.needsUpdate = true;
   });
 
-  // Taps on a ship: a short press with little movement, one pointer.
+  // Taps on a ship: a short press with little movement, one pointer. The tap fires after a short
+  // delay and is dropped when it turns out to be the first half of a double-tap (star focus).
   useEffect(() => {
     const el = gl.domElement;
+    const gate = createShipTapGate();
     const active = new Set<number>();
-    let down: { x: number; y: number; t: number; multi: boolean } | null = null;
+    let down: { x: number; y: number; t: number; multi: boolean; second: boolean } | null = null;
     const onDown = (ev: PointerEvent) => {
       active.add(ev.pointerId);
-      down = { x: ev.clientX, y: ev.clientY, t: performance.now(), multi: active.size > 1 };
+      const second = gate.down(ev.clientX, ev.clientY);
+      down = { x: ev.clientX, y: ev.clientY, t: performance.now(), multi: active.size > 1, second };
     };
     const onCancel = (ev: PointerEvent) => { active.delete(ev.pointerId); down = null; };
     const onUp = (ev: PointerEvent) => {
       active.delete(ev.pointerId);
       const d = down;
       down = null;
-      if (!d || d.multi || active.size > 0) return;
+      if (!d || d.multi || d.second || active.size > 0) return;
       if (Math.hypot(ev.clientX - d.x, ev.clientY - d.y) > 10 || performance.now() - d.t > 400) return;
       const rect = el.getBoundingClientRect();
       const px = ev.clientX - rect.left, py = ev.clientY - rect.top;
@@ -343,12 +213,15 @@ export function Ships(props: ShipsProps) {
         if (work.proj.z > 1) return null;
         return { x: (work.proj.x * 0.5 + 0.5) * w, y: (-work.proj.y * 0.5 + 0.5) * h, depth: work.proj.z };
       }, px, py, TAP_RADIUS_PX);
-      if (i >= 0) propsRef.current.onShipTap?.(entries[i]!.dockId);
+      if (i < 0) return;
+      const id = entries[i]!.dockId;
+      gate.tap(ev.clientX, ev.clientY, () => propsRef.current.onShipTap?.(id));
     };
     el.addEventListener('pointerdown', onDown);
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointercancel', onCancel);
     return () => {
+      gate.dispose();
       el.removeEventListener('pointerdown', onDown);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onCancel);

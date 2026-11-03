@@ -24,7 +24,6 @@ vi.mock('../map/MapScene.tsx', async () => {
   const { useEffect } = await import('react');
   type P = {
     docks: { id: string; songId: string }[];
-    encounterSongIds: string[];
     hereDocks?: { id: string; songId: string }[];
     currentSongId: string;
     flight: unknown;
@@ -36,10 +35,9 @@ vi.mock('../map/MapScene.tsx', async () => {
     useEffect(() => { if (p.flight) p.onFlightEnd?.(); }, [p.flight]);
     return (
       <div data-testid="map" data-current={p.currentSongId}>
-        {p.encounterSongIds.map((songId) => {
-          const d = p.docks.find((x) => x.songId === songId)!;
-          return <button key={d.id} aria-label={`ship ${songId}`} onClick={() => p.onShipTap?.(d.id)} />;
-        })}
+        {[...new Map(p.docks.map((d) => [d.songId, d])).values()].map((d) => (
+          <button key={d.id} aria-label={`ship ${d.songId}`} onClick={() => p.onShipTap?.(d.id)} />
+        ))}
         {(p.hereDocks ?? []).map((d) => (
           <button key={d.id} aria-label={`ship here ${d.id}`} onClick={() => p.onShipTap?.(d.id)} />
         ))}
