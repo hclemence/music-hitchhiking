@@ -7,7 +7,8 @@
     "allowImportingTsExtensions": true,
     "target": "ES2022",
     "lib": ["ES2022", "DOM"],
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": { "@core/*": ["./supabase/functions/_shared/core/*"] }
   },
   "include": ["supabase/functions/_shared", "tests", "scripts", "vitest.config.ts", "vitest.integration.config.ts"]
 }
