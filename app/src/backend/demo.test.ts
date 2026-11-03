@@ -68,7 +68,10 @@ describe('map', () => {
   it('returns all songs as bright stars, sample docks and regions', async () => {
     const m = await make().loadMap();
     expect(m.stars).toHaveLength(4);
-    expect(m.stars.every((s) => s.brightness === 1)).toBe(true);
+    expect(m.stars.every((s) => s.brightness >= 0.25 && s.brightness <= 1)).toBe(true);
+    expect(new Set(m.stars.map((s) => s.brightness)).size).toBeGreaterThan(1);
+    const again = await make().loadMap();
+    expect(again.stars.map((s) => s.brightness)).toEqual(m.stars.map((s) => s.brightness));
     expect(m.stars[0]).toMatchObject({ id: 'song-1', title: 'Title 1', spotifyUrl: 's1' });
     expect(m.regions).toEqual(map.regions);
     expect(m.docks).toHaveLength(1);

@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+
 export const MIN_DISTANCE = 20;
 export const MAX_DISTANCE = 1500;
 export const FLIGHT_MS = 1500;
@@ -45,4 +47,24 @@ export function pickNearest(
     }
   }
   return best;
+}
+
+export const SHIP_SCREEN_SCALE = 0.022; // ship length as a fraction of camera distance
+const ax = new THREE.Vector3();
+const ay = new THREE.Vector3();
+
+/** Ship scale that keeps it small and roughly constant on screen. */
+export const shipScale = (camera: THREE.Camera, at: THREE.Vector3): number =>
+  Math.max(0.3, camera.position.distanceTo(at) * SHIP_SCREEN_SCALE);
+
+/** Sets `out` to `at` plus a docked offset (up-right, just beyond the star's glow). */
+export function dockedPosition(
+  camera: THREE.Camera, at: THREE.Vector3, scale: number, bob: number, out: THREE.Vector3,
+): THREE.Vector3 {
+  const unit = scale / SHIP_SCREEN_SCALE; // = camera distance, clamped consistently
+  ax.set(1, 0, 0).applyQuaternion(camera.quaternion);
+  ay.set(0, 1, 0).applyQuaternion(camera.quaternion);
+  return out.copy(at)
+    .addScaledVector(ax, 0.03 * unit)
+    .addScaledVector(ay, 0.024 * unit + bob * scale);
 }

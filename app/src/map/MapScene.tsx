@@ -9,7 +9,9 @@ import { buildStarBuffers } from './stars.ts';
 import { Dust, Stars } from './Stars.tsx';
 import { ShipModel } from './ShipModel.tsx';
 import { Flight, type FlightState, type Vec3 } from './Flight.tsx';
-import { createDoubleTap, MAX_DISTANCE, MIN_DISTANCE, pickNearest } from './controls.ts';
+import {
+  createDoubleTap, dockedPosition, MAX_DISTANCE, MIN_DISTANCE, pickNearest, shipScale,
+} from './controls.ts';
 
 export type { FlightState, Vec3 };
 
@@ -28,8 +30,7 @@ export type MapSceneProps = {
   onFlightEnd?: () => void;
 };
 
-const SHIP_SCREEN_SCALE = 0.06; // world units per unit of camera distance
-const START_DISTANCE = 360;
+const START_DISTANCE = 620;
 const PICK_RADIUS_PX = 32;
 
 type Controls = React.ComponentRef<typeof OrbitControls>;
@@ -46,14 +47,9 @@ function DockedShip({
   useFrame(({ camera, clock }) => {
     const g = group.current;
     if (!g) return;
-    const s = Math.max(0.4, camera.position.distanceTo(at) * SHIP_SCREEN_SCALE);
+    const s = shipScale(camera, at);
     g.scale.setScalar(s);
-    // docked just up-and-right of the star, gently bobbing
-    const bob = Math.sin(clock.elapsedTime * 1.2 + phase) * 0.18 * s;
-    g.position.set(0, 0, 0)
-      .addScaledVector(new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion), 1.1 * s)
-      .addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion), 0.9 * s + bob)
-      .add(at);
+    dockedPosition(camera, at, s, Math.sin(clock.elapsedTime * 1.2 + phase) * 0.18, g.position);
     g.quaternion.copy(fwd.copy(camera.quaternion).multiply(flip));
   });
   return (
@@ -79,14 +75,16 @@ function TapToFocus({
   positions, ids, onStarDoubleTap,
 }: { positions: Float32Array; ids: string[]; onStarDoubleTap?: (id: string) => void }) {
   const { gl, camera, size } = useThree();
+  const cb = useRef(onStarDoubleTap);
+  cb.current = onStarDoubleTap;
   useEffect(() => {
     const el = gl.domElement;
     const dt = createDoubleTap();
     const v = new THREE.Vector3();
     let down: { x: number; y: number; id: number } | null = null;
-    const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY, id: e.pointerId }; };
+    const onDown = (e: PointerEvent) => { if (!e.isPrimary) { down = null; return; } down = { x: e.clientX, y: e.clientY, id: e.pointerId }; };
     const onUp = (e: PointerEvent) => {
-      if (!down || down.id !== e.pointerId) return;
+      if (!e.isPrimary || !down || down.id !== e.pointerId) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
       if (moved > 10) return;
@@ -98,12 +96,12 @@ function TapToFocus({
         if (v.z > 1) return null;
         return { x: (v.x * 0.5 + 0.5) * size.width, y: (-v.y * 0.5 + 0.5) * size.height, depth: v.z };
       }, px, py, PICK_RADIUS_PX);
-      if (i >= 0) onStarDoubleTap?.(ids[i]!);
+      if (i >= 0) cb.current?.(ids[i]!);
     };
     el.addEventListener('pointerdown', onDown);
     el.addEventListener('pointerup', onUp);
     return () => { el.removeEventListener('pointerdown', onDown); el.removeEventListener('pointerup', onUp); };
-  }, [gl, camera, size, positions, ids, onStarDoubleTap]);
+  }, [gl, camera, size, positions, ids]);
   return null;
 }
 
@@ -128,7 +126,7 @@ function Scene(props: MapSceneProps) {
     if (i === undefined) return null;
     return new THREE.Vector3(buffers.positions[i * 3], buffers.positions[i * 3 + 1], buffers.positions[i * 3 + 2]);
   };
-  const currentPos = useMemo(() => posOf(currentSongId), [buffers, currentSongId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const currentPos = useMemo(() => posOf(currentSongId), [buffers, currentSongId]);
 
   // Follow the current star (the flight drives the target itself while it runs).
   const placed = useRef(false);
@@ -156,12 +154,7 @@ function Scene(props: MapSceneProps) {
       out.push({ dock, at });
     }
     return out;
-  }, [docks, encounterSongIds, buffers]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const flightScale = useRef(1);
-  useFrame(() => {
-    if (flight) flightScale.current = Math.max(0.4, camera.position.distanceTo(controls.current?.target ?? camera.position) * SHIP_SCREEN_SCALE);
-  });
+  }, [docks, encounterSongIds, buffers]);
 
   return (
     <>
@@ -189,7 +182,7 @@ function Scene(props: MapSceneProps) {
       {flight ? (
         <Flight
           key={flight.startedAt}
-          flight={flight} colour={myShipColour} scale={flightScale.current}
+          flight={flight} colour={myShipColour}
           controls={controls} onEnd={() => onFlightEnd?.()}
         />
       ) : currentPos ? (
@@ -203,7 +196,7 @@ export function MapScene(props: MapSceneProps) {
   return (
     <Canvas
       dpr={[1, 2]}
-      camera={{ fov: 55, near: 0.5, far: 8000, position: [0, 0, START_DISTANCE] }}
+      camera={{ fov: 60, near: 0.5, far: 8000, position: [0, 0, START_DISTANCE] }}
       gl={{ antialias: false, powerPreference: 'high-performance' }}
       style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
     >

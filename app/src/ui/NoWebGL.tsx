@@ -1,7 +1,9 @@
 export function supportsWebGL2(): boolean {
   try {
     const canvas = document.createElement('canvas');
-    return !!canvas.getContext('webgl2');
+    const gl = canvas.getContext('webgl2');
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    return !!gl;
   } catch {
     return false;
   }

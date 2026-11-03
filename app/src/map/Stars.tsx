@@ -11,8 +11,8 @@ const vertex = /* glsl */ `
   void main() {
     vColour = aColour;
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    float px = size * 1400.0 / max(-mv.z, 1.0);
-    gl_PointSize = clamp(px, 3.0, 40.0) * uPx;
+    float px = size * 1700.0 / max(-mv.z, 1.0);
+    gl_PointSize = clamp(px, 4.5, 44.0) * uPx;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -21,9 +21,9 @@ const fragment = /* glsl */ `
   void main() {
     float d = length(gl_PointCoord - vec2(0.5)) * 2.0;
     if (d > 1.0) discard;
-    float core = smoothstep(0.35, 0.0, d);
+    float core = smoothstep(0.55, 0.0, d);
     float halo = pow(1.0 - d, 2.5);
-    gl_FragColor = vec4(vColour * (0.35 * halo + core * 1.1) + vec3(core * 0.25), 1.0);
+    gl_FragColor = vec4(vColour * (0.8 * halo + core * 1.2) + vec3(core * 0.25), 1.0);
   }
 `;
 

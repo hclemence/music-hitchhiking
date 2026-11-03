@@ -27,6 +27,13 @@ function dayOf(now: Date, tz: string): string {
   }
 }
 
+/** Deterministic brightness in 0.25..1 seeded by the song id (demo only). */
+export function demoBrightness(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return 0.25 + 0.75 * ((h >>> 0) / 4294967296);
+}
+
 export function createDemoBackend(
   map: SampleMap,
   storage: Storage,
@@ -48,7 +55,7 @@ export function createDemoBackend(
 
   const songs: Song[] = map.songs.map((s) => ({
     id: s.id, x: s.x, y: s.y, z: s.z, localRadius: s.localRadius, regionId: s.regionId,
-    brightness: 1, title: s.title, artist: s.artist,
+    brightness: demoBrightness(s.id), title: s.title, artist: s.artist,
     spotifyUrl: s.spotifyUrl, appleUrl: s.appleUrl, youtubeUrl: s.youtubeUrl,
   }));
   const songById = new Map(songs.map((s) => [s.id, s]));
