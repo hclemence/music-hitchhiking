@@ -39,7 +39,8 @@ function makeStore(): Storage {
 async function createBackend(): Promise<Backend> {
   const env = import.meta.env;
   const storage = localStore();
-  if (env.VITE_BACKEND === 'demo' || !env.VITE_SUPABASE_URL) {
+  // Read directly (not via `env`) so the demo build's `define` makes this constant and drops supabase-js.
+  if (import.meta.env.VITE_BACKEND === 'demo' || !import.meta.env.VITE_SUPABASE_URL) {
     const [{ createDemoBackend }, map] = await Promise.all([
       import('./backend/demo.ts'),
       import('../../data/sample-map.json'),

@@ -295,8 +295,8 @@ button.big { width: 100%; min-height: 52px; font-size: 17px; }
 .picker { display: flex; flex-direction: column; gap: 14px; }
 .ship-preview { height: 200px; border-radius: var(--radius); background: var(--card); overflow: hidden; }
 .swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
-.swatch { width: 100%; aspect-ratio: 1; min-height: var(--tap); border-radius: 50%; border: 3px solid transparent; padding: 0; }
-.swatch[aria-pressed='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg) inset; }
+.swatches .swatch { width: 100%; aspect-ratio: 1; min-height: var(--tap); border-radius: 50%; border: 3px solid transparent; padding: 0; }
+.swatches .swatch[aria-pressed='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg) inset; }
 .check { flex-direction: row; align-items: center; gap: 10px; min-height: var(--tap); font-size: 15px; color: var(--text); }
 .check input { width: 22px; height: 22px; accent-color: var(--accent); }
 .onboard { max-width: 480px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 32px) 20px 20px; display: flex; flex-direction: column; gap: 14px; height: 100%; overflow-y: auto; }

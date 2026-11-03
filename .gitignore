@@ -3,3 +3,6 @@ node_modules
 supabase/.temp
 supabase/.branches
 dist
+dist-demo
+test-results
+playwright-report

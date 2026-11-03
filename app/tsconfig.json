@@ -12,5 +12,5 @@
     "types": ["node", "vite/client"],
     "paths": { "@core/*": ["../supabase/functions/_shared/core/*"] }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "e2e", "vite.config.ts", "vite.demo.config.ts", "playwright.config.ts"]
 }

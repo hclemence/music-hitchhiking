@@ -28,6 +28,20 @@ pnpm seed:sample    # optional: load the sample song map (needs the stack runnin
 
 Integration tests read the stack's connection details from `supabase status`, or from `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` if all three are set. Also run `pnpm exec tsc -p .` for type checks.
 
+## App
+
+The phone-first web app lives in `app/` (Vite, React, React Three Fiber).
+
+- **Live:** `VITE_SUPABASE_URL=... VITE_SUPABASE_ANON_KEY=... pnpm app:dev` (the URL and anon key are `API_URL` and `ANON_KEY` from `pnpm supabase status -o env`). Needs the stack running, `pnpm seed:sample`, and `pnpm functions:serve` for invites.
+- **Demo:** `VITE_BACKEND=demo pnpm app:dev` (or no Supabase URL at all) runs over the sample map in the browser with `DemoBackend`: no accounts, traces or inbox.
+- **Unit tests:** `pnpm app:test` (Vitest + jsdom, needs nothing). Type check: `pnpm exec tsc -p app`.
+- **End-to-end:** `pnpm app:e2e` builds the demo, then runs Playwright (Chromium at 390×844 with touch):
+  - `live`: two people redeem invites, dock, explore, like each other's ships, send a song and reply, against the local stack. Needs the stack running, `pnpm seed:sample` and `pnpm functions:serve`; it starts its own Vite dev server on port 5199 and deletes the users it made. Screenshots go to `app/test-results/e2e-screens` (or `E2E_SCREENSHOT_DIR`).
+  - `demo`: opens `app/dist-demo/index.html` from disk with every non-local request aborted and goes Ship → Dock → map. `pnpm --filter app exec playwright test --project=demo` runs it alone, without the stack.
+- **Demo build:** `pnpm app:build:demo` writes one self-contained file, `app/dist-demo/index.html` (about 1.4 MB: app, sample map and styles inlined, system fonts, no network at runtime), for publishing as a single page.
+
+Run `pnpm test:db` before `pnpm seed:sample`: the pgTAP fixtures expect an unseeded database.
+
 ## Creating invites
 
 ```
