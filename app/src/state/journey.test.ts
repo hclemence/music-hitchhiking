@@ -26,7 +26,7 @@ const loaded = () => journeyReducer(empty, { type: 'loaded', journey: journey() 
 describe('journeyReducer', () => {
   it('loads a journey and clears pending', () => {
     const s = journeyReducer(
-      { ...loaded(), pending: { tempId: 't', songId: 'x', parentHopId: 'h1', kind: 'jump' } },
+      { ...loaded(), pending: { tempId: 't', songId: 'x', parentHopId: 'h1', kind: 'jump', createdAt: '2026-01-02T00:00:00.000Z' } },
       { type: 'loaded', journey: journey() },
     );
     expect(s.pending).toBeNull();
@@ -35,7 +35,7 @@ describe('journeyReducer', () => {
 
   it('shows an optimistic hop as current, then replaces it on confirm', () => {
     let s = journeyReducer(loaded(), {
-      type: 'hopStarted', tempId: 'tmp', parentHopId: 'h1', songId: 's2', kind: 'hitchhike',
+      type: 'hopStarted', tempId: 'tmp', parentHopId: 'h1', songId: 's2', kind: 'hitchhike', createdAt: '2026-01-02T00:00:00.000Z',
     });
     expect(currentHop(s)?.id).toBe('tmp');
     expect(currentHop(s)?.songId).toBe('s2');
@@ -52,7 +52,7 @@ describe('journeyReducer', () => {
 
   it('removes a failed hop and restores the previous current', () => {
     let s = journeyReducer(loaded(), {
-      type: 'hopStarted', tempId: 'tmp', parentHopId: 'h1', songId: 's2', kind: 'jump',
+      type: 'hopStarted', tempId: 'tmp', parentHopId: 'h1', songId: 's2', kind: 'jump', createdAt: '2026-01-02T00:00:00.000Z',
     });
     s = journeyReducer(s, { type: 'hopFailed', tempId: 'tmp' });
     expect(s.pending).toBeNull();
@@ -65,9 +65,52 @@ describe('journeyReducer', () => {
     let s = journeyReducer(loaded(), { type: 'movedTo', hopId: 'h0' });
     expect(currentHop(s)?.id).toBe('h0');
     expect(s.journey!.hops).toHaveLength(2);
-    s = journeyReducer(s, { type: 'hopStarted', tempId: 't', parentHopId: 'h0', songId: 's9', kind: 'hitchhike' });
+    s = journeyReducer(s, { type: 'hopStarted', tempId: 't', parentHopId: 'h0', songId: 's9', kind: 'hitchhike', createdAt: '2026-01-02T00:00:00.000Z' });
     s = journeyReducer(s, { type: 'hopConfirmed', tempId: 't', hop: hop('h2', 'h0', 's9') });
     expect(s.journey!.hops.filter((h) => h.parentHopId === 'h0').map((h) => h.id)).toEqual(['h1', 'h2']);
+  });
+
+  it('currentHop returns the identical optimistic object across calls', () => {
+    const s = journeyReducer(loaded(), {
+      type: 'hopStarted', tempId: 'tmp', parentHopId: 'h1', songId: 's2', kind: 'jump', createdAt: '2026-01-02T00:00:00.000Z',
+    });
+    expect(currentHop(s)).toBe(currentHop(s));
+    expect(currentHop(s)?.createdAt).toBe('2026-01-02T00:00:00.000Z');
+  });
+
+  it('confirm after loaded already containing the real hop does not duplicate; stale confirm/fail are ignored', () => {
+    const started = journeyReducer(loaded(), {
+      type: 'hopStarted', tempId: 'tmp', parentHopId: 'h1', songId: 's2', kind: 'hitchhike', createdAt: '2026-01-02T00:00:00.000Z',
+    });
+    const real = hop('real', 'h1', 's2');
+    const reloaded = journeyReducer(started, {
+      type: 'loaded', journey: { id: 'j', currentHopId: 'real', hops: [...journey().hops, real] },
+    });
+    expect(journeyReducer(reloaded, { type: 'hopConfirmed', tempId: 'tmp', hop: real })).toBe(reloaded);
+    expect(journeyReducer(reloaded, { type: 'hopFailed', tempId: 'tmp' })).toBe(reloaded);
+    expect(journeyReducer(started, { type: 'hopConfirmed', tempId: 'other', hop: real })).toBe(started);
+    // real hop already present while pending: filtered, not duplicated
+    const dup = journeyReducer(started, { type: 'hopConfirmed', tempId: 'tmp', hop: hop('h1', 'h0', 's1') });
+    expect(dup.journey!.hops.filter((h) => h.id === 'h1')).toHaveLength(1);
+  });
+
+  it('ignores a second hopStarted while one is pending', () => {
+    const started = journeyReducer(loaded(), {
+      type: 'hopStarted', tempId: 'tmp', parentHopId: 'h1', songId: 's2', kind: 'hitchhike', createdAt: '2026-01-02T00:00:00.000Z',
+    });
+    const again = journeyReducer(started, {
+      type: 'hopStarted', tempId: 'tmp2', parentHopId: 'h1', songId: 's3', kind: 'jump', createdAt: '2026-01-03T00:00:00.000Z',
+    });
+    expect(again).toBe(started);
+  });
+
+  it('hopFailed drops the temp seen-docks entry', () => {
+    let s = journeyReducer(loaded(), {
+      type: 'hopStarted', tempId: 'tmp', parentHopId: 'h1', songId: 's2', kind: 'hitchhike', createdAt: '2026-01-02T00:00:00.000Z',
+    });
+    s = journeyReducer(s, { type: 'encountersShown', hopId: 'tmp', dockIds: ['d1'] });
+    s = journeyReducer(s, { type: 'hopFailed', tempId: 'tmp' });
+    expect(s.seenDockIdsByHop['tmp']).toBeUndefined();
   });
 
   it('pathSongIds includes all hops songs', () => {
@@ -92,7 +135,7 @@ describe('journeyReducer', () => {
     };
     deepFreeze(s);
     let n = journeyReducer(s, { type: 'encountersShown', hopId: 'h1', dockIds: ['a'] });
-    n = journeyReducer(n, { type: 'hopStarted', tempId: 't', parentHopId: 'h1', songId: 'x', kind: 'jump' });
+    n = journeyReducer(n, { type: 'hopStarted', tempId: 't', parentHopId: 'h1', songId: 'x', kind: 'jump', createdAt: '2026-01-02T00:00:00.000Z' });
     deepFreeze(n);
     n = journeyReducer(n, { type: 'hopConfirmed', tempId: 't', hop: hop('r', 'h1', 'x', 'jump') });
     deepFreeze(n);
