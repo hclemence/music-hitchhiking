@@ -54,6 +54,14 @@ describe('encounterFlowReducer', () => {
     expect(s.parked).toEqual(['d1']);
   });
 
+  it('Wait during the fly-in does nothing (the ship lands first)', () => {
+    const s = run(arrived('h1', 1000), revealed('h1', 'd1', 2500));
+    expect(s.phase).toBe('arriving');
+    expect(encounterFlowReducer(s, waitPressed(3000))).toBe(s);
+    const landed = encounterFlowReducer(s, flyInDone('d1'));
+    expect(encounterFlowReducer(landed, waitPressed(4000)).phase).toBe('pending');
+  });
+
   it('Wait before any arrival does nothing', () => {
     expect(encounterFlowReducer(initialEncounterFlow, waitPressed(5000))).toBe(initialEncounterFlow);
   });

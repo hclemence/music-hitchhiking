@@ -48,7 +48,8 @@ export function encounterFlowReducer(s: EncounterFlowState, a: EncounterFlowActi
     case 'arrived':
       return { hopId: a.hopId, phase: 'pending', dueAt: a.now + ARRIVAL_DELAY_MS, current: null, parked: [], popup: null };
     case 'waitPressed':
-      if (s.hopId === null) return s;
+      // During the fly-in the ship lands first; Wait is offered again once it has.
+      if (s.hopId === null || s.phase === 'arriving') return s;
       return { ...s, phase: 'pending', dueAt: a.now + WAIT_DRIFT_MS };
     case 'revealed':
       if (a.hopId !== s.hopId) return s;

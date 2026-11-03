@@ -250,6 +250,8 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
   const checkReveal = useCallback(() => {
     const f = flowRef.current;
     if (f.phase !== 'pending' || f.dueAt === null || f.hopId === null) return;
+    // Hidden tabs still fire (throttled) timers: hold the reveal so the fly-in is seen on return.
+    if (document.visibilityState === 'hidden') return;
     const now = Date.now();
     if (now < f.dueAt) return;
     const s = stateRef.current;

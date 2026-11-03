@@ -228,9 +228,11 @@ describe('Explore encounters', () => {
     const docks = sample.docks.filter((d) => d.songId !== HOME.id).slice(0, 2);
     await open(demo({ ...sample, docks }));
     const first = popupDock();
+    await tick(FLY_IN_MS);
     await wait();
     await tick(WAIT_DRIFT_MS);
     expect(popupDock()).not.toBe(first);
+    await tick(FLY_IN_MS);
     await wait();
     await tick(WAIT_DRIFT_MS);
     expect(queryPopup()).not.toBeInTheDocument();
@@ -253,6 +255,7 @@ describe('Explore encounters', () => {
     const backend: Backend = { ...base, async hop(...a) { if (gate) await gate; return base.hop(...a); } };
     await open(backend);
     const target = songOf(popup());
+    await tick(FLY_IN_MS);
     await wait(); // a reveal for this stop is now due in 800 ms
     const d = deferred();
     gate = d.promise;
@@ -270,7 +273,7 @@ describe('Explore encounters', () => {
     expect(parkedIds()).toEqual([expected.dock.id]);
   });
 
-  it('a hidden tab reveals exactly once when it is shown again (RF1)', async () => {
+  it('a hidden tab reveals exactly once when it is shown again, and the fly-in starts then (RF1)', async () => {
     const base = demo();
     let loadGate: Promise<void> | null = null;
     // The reload that coming back starts never lands, so only the visibility check can reveal.
@@ -280,15 +283,70 @@ describe('Explore encounters', () => {
     loadGate = new Promise(() => {});
     setVisibility('hidden');
     act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-    vi.setSystemTime(Date.now() + 10_000); // time passes but the throttled timer has not fired
-    await settle();
+    await tick(ARRIVAL_DELAY_MS + FLY_IN_MS + 5000); // hidden tabs still fire (throttled) timers
     expect(queryPopup()).not.toBeInTheDocument();
+    expect(parkedIds()).toEqual([]);
     await becomeVisible();
     expect(popupDock()).toBe(nearest.dock.id);
     expect(parkedIds()).toEqual([nearest.dock.id]);
-    await tick(ARRIVAL_DELAY_MS + FLY_IN_MS); // the throttled timer fires late: nothing more
+    expect(scene.props!.arriving?.dockId).toBe(nearest.dock.id); // the fly-in starts on return
+    await tick(FLY_IN_MS);
+    expect(scene.props!.arriving).toBeNull();
+    await tick(ARRIVAL_DELAY_MS + 5000);
     expect(popupDock()).toBe(nearest.dock.id);
     expect(parkedIds()).toEqual([nearest.dock.id]);
+  });
+
+  it('a Wait reveal that falls due while hidden waits for the tab to be shown', async () => {
+    await open(demo());
+    await tick(FLY_IN_MS);
+    const first = popupDock();
+    await wait();
+    setVisibility('hidden');
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    await tick(WAIT_DRIFT_MS * 3);
+    expect(popupDock()).toBe(first);
+    await becomeVisible();
+    expect(popupDock()).not.toBe(first);
+    expect(parkedIds()).toHaveLength(2);
+    expect(scene.props!.arriving?.dockId).toBe(popupDock());
+  });
+
+  it('Wait is unavailable while the ship flies in', async () => {
+    await open(demo());
+    const first = popupDock();
+    const waitButton = screen.getByRole('button', { name: 'Wait' });
+    expect(scene.props!.arriving?.dockId).toBe(first);
+    expect(waitButton).toBeDisabled();
+    fireEvent.click(waitButton);
+    await tick(WAIT_DRIFT_MS);
+    expect(popupDock()).toBe(first);
+    expect(scene.props!.arriving?.dockId).toBe(first); // still flying, not snapped into its slot
+    expect(parkedIds()).toEqual([first]);
+    await tick(FLY_IN_MS - WAIT_DRIFT_MS);
+    expect(scene.props!.arriving).toBeNull();
+    expect(waitButton).toBeEnabled();
+  });
+
+  it('a reveal closes an open Docked-here card so the pop-up is seen', async () => {
+    const backend = demo();
+    const at = sample.docks[0]!.songId;
+    const theirs = sample.docks.find((d) => d.songId === at)!.id;
+    await backend.setHome(at);
+    await backend.startJourney(TZ, at);
+    render(<Explore backend={backend} tz={TZ} onNavigate={onNavigate} />);
+    await settle();
+    await click(screen.getByRole('button', { name: `ship here ${theirs}` }));
+    expect(screen.getByLabelText('Docked here')).toBeInTheDocument();
+    await reveal();
+    expect(screen.queryByLabelText('Docked here')).not.toBeInTheDocument();
+    expect(popup()).toBeInTheDocument();
+  });
+
+  it('the pop-up is announced: it opens inside a polite live region', async () => {
+    await open(demo());
+    const live = popup().closest('[aria-live]');
+    expect(live).toHaveAttribute('aria-live', 'polite');
   });
 
   it('a reveal that falls due while a hop is pending, which then fails, is made where you are', async () => {
@@ -300,6 +358,7 @@ describe('Explore encounters', () => {
     };
     await open(backend);
     const first = popupDock();
+    await tick(FLY_IN_MS);
     await wait();
     await hitchhike();
     await tick(WAIT_DRIFT_MS * 2); // the Wait reveal falls due while the hop is pending
@@ -317,6 +376,7 @@ describe('Explore encounters', () => {
     await open(demo());
     const seen = [popupDock()];
     for (let i = 0; i < 5; i++) {
+      await tick(FLY_IN_MS);
       await wait();
       await tick(WAIT_DRIFT_MS);
       seen.push(popupDock());
@@ -328,6 +388,7 @@ describe('Explore encounters', () => {
 
   it('a reload of the same journey does not restart the stop', async () => {
     await open(demo());
+    await tick(FLY_IN_MS);
     await wait();
     await tick(WAIT_DRIFT_MS);
     const parked = parkedIds();

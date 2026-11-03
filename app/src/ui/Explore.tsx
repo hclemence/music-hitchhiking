@@ -96,6 +96,8 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
     [arrivingId],
   );
   const shownPopup = enc.popup;
+  // A reveal opens its pop-up in front of any Docked-here card.
+  useEffect(() => { if (arrivingId) setHereDockId(null); }, [arrivingId]);
 
   return (
     <>
@@ -148,9 +150,9 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           )}
         </div>
       </div>
-      <section className="sheet" aria-label="Encounters">
+      <section className="sheet" aria-label="Encounters" aria-live="polite">
         {hereCard ? (
-          <div className="encounters" aria-label="Docked here">
+          <div className="here-card" aria-label="Docked here">
             <EncounterCard
               encounter={hereCard}
               selected
@@ -176,7 +178,9 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
         )}
         <nav className="toolbar" aria-label="Actions">
           <button type="button" onClick={x.actions.home} disabled={busy || !homeId || current?.id === homeId}>Home</button>
-          <button type="button" onClick={x.actions.wait} disabled={x.flight !== null}>Wait</button>
+          <button type="button" onClick={x.actions.wait} disabled={x.flight !== null || enc.phase === 'arriving'}>
+            Wait
+          </button>
           {backend.mode !== 'demo' && (
             <>
               <button type="button" onClick={() => onNavigate('history')}>History</button>

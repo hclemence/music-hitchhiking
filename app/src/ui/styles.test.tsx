@@ -44,6 +44,12 @@ describe('app.css', () => {
     expect(declared(dot, 'min-height')).toEqual([]);
   });
 
+  it('has no rules left from the deleted three-card strip', () => {
+    expect(css).not.toMatch(/\.encounters\b/);
+    expect(css).not.toMatch(/\.empty\b/);
+    expect(css).not.toMatch(/scroll-snap/);
+  });
+
   it('still sizes the ship picker swatches as tap targets', () => {
     render(<div className="swatches"><button type="button" className="swatch" aria-label="c" /></div>);
     const swatch = screen.getByRole('button', { name: 'c' });

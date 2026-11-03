@@ -122,22 +122,9 @@ button.big { width: 100%; min-height: 52px; font-size: 17px; }
   flex-direction: column;
   gap: 8px;
 }
-.encounters {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scroll-snap-type: x mandatory;
-  padding: 2px var(--gutter);
-  scroll-padding: 0 var(--gutter);
-  scrollbar-width: none;
-}
-.encounters::-webkit-scrollbar { display: none; }
-.empty { padding: 20px var(--gutter); text-align: center; color: var(--muted); }
+.here-card { padding: 2px var(--gutter); }
 
 .card {
-  flex: 0 0 min(300px, 80vw);
-  scroll-snap-align: start;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
