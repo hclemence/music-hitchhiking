@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Backend, Song } from '../backend/types.ts';
 import { EncounterCard } from './EncounterCard.tsx';
 import { MapScene } from '../map/MapScene.tsx';
-import { useExplore, type ExploreModel } from '../state/useExplore.ts';
+import { useExplore, type ExploreModel, type ShownEncounter } from '../state/useExplore.ts';
 import { EncounterBar } from './EncounterBar.tsx';
 import { MiniMap } from './MiniMap.tsx';
 import { OfflineBanner } from './OfflineBanner.tsx';
@@ -15,6 +15,7 @@ type Props = { backend: Backend; tz: string; onNavigate: (screen: Screen) => voi
 };
 
 const SEARCH_DEBOUNCE_MS = 250;
+const NO_PARKED: ShownEncounter[] = [];
 
 export function Explore({ backend, tz, onNavigate, reloadToken, jumpRequest }: Props) {
   const x = useExplore(backend, tz, { reloadToken });
@@ -101,7 +102,12 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           currentSongId={current.id}
           encounterSongIds={encounterSongIds}
           hereDocks={x.hereDocks}
+          myDockId={x.myDock?.id ?? null}
           myShipColour={x.profile!.shipColour}
+          routeHops={x.hops}
+          extraSongs={x.extraSongs}
+          parked={NO_PARKED}
+          arriving={null}
           flight={x.flight}
           onFlightEnd={x.actions.endFlight}
           onShipTap={(dockId) => {

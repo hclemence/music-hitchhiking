@@ -42,7 +42,7 @@ export function skyUniforms(
   sorted.forEach((r, i) => {
     centres[i * 2] = r.x;
     centres[i * 2 + 1] = r.y;
-    colours.set(gradeSkyColour(parseHex(palette.get(r.id)!)), i * 3);
+    colours.set(parseHex(palette.get(r.id)!), i * 3); // raw: the shader grades the blend once
   });
   return { centres, colours, count: sorted.length };
 }

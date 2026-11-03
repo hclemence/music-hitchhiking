@@ -423,6 +423,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     currentHopId: hop?.id ?? null,
     current,
     songs,
+    extraSongs,
     encounters,
     hereDocks,
     offline: hopOffline || queueOffline || songOffline,

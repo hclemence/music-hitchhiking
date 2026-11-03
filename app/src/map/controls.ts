@@ -1,7 +1,5 @@
 import * as THREE from 'three';
 
-export const MIN_DISTANCE = 20;
-export const MAX_DISTANCE = 1500;
 export const FLIGHT_MS = 1500;
 
 export const easeInOut = (t: number): number => {
@@ -97,34 +95,14 @@ export function pickNearest(
   return best;
 }
 
-export const SHIP_SCREEN_SCALE = 0.022; // ship length as a fraction of camera distance
-const ax = new THREE.Vector3();
-const ay = new THREE.Vector3();
+export const MIN_VISIBLE_WIDTH = 150;
+export const MAX_VISIBLE_WIDTH = 2000;
+export const DEFAULT_VISIBLE_WIDTH = 600;
+export const MAP_FOV = 50;
+/** Camera elevation above the plane, in degrees. */
+export const MAP_PITCH_DEG = 35;
 
-/** Ship scale that keeps it small and roughly constant on screen. */
-export const shipScale = (camera: THREE.Camera, at: THREE.Vector3): number =>
-  Math.max(0.3, camera.position.distanceTo(at) * SHIP_SCREEN_SCALE);
-
-/**
- * Docked offsets around a star in screen axes, as fractions of the camera distance. Slot 0
- * (up-right) is the only one used at encounter stars and for your own ship; other people's
- * ships at your current star take the slots after it.
- */
-const DOCK_SLOTS: readonly (readonly [number, number])[] = [
-  [0.03, 0.024], [-0.03, 0.024], [-0.03, -0.024], [0.03, -0.024], [0.056, 0], [-0.056, 0],
-];
-/** How many other ships fit beside your own at the current star. */
-export const MAX_SHIPS_HERE = DOCK_SLOTS.length - 1;
-
-/** Sets `out` to `at` plus a docked offset (slot 0: up-right, just beyond the star's glow). */
-export function dockedPosition(
-  camera: THREE.Camera, at: THREE.Vector3, scale: number, bob: number, out: THREE.Vector3, slot = 0,
-): THREE.Vector3 {
-  const unit = scale / SHIP_SCREEN_SCALE; // = camera distance, clamped consistently
-  const [sx, sy] = DOCK_SLOTS[Math.min(Math.max(0, slot), DOCK_SLOTS.length - 1)]!;
-  ax.set(1, 0, 0).applyQuaternion(camera.quaternion);
-  ay.set(0, 1, 0).applyQuaternion(camera.quaternion);
-  return out.copy(at)
-    .addScaledVector(ax, sx * unit)
-    .addScaledVector(ay, sy * unit + bob * scale);
+/** Camera-to-target distance at which `width` map units span the viewport (vertical fov, aspect = w/h). */
+export function distanceForWidth(width: number, fovDeg: number, aspect: number): number {
+  return width / (2 * Math.tan((fovDeg * Math.PI) / 360) * Math.max(0.1, aspect));
 }

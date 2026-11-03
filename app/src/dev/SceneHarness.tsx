@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createDemoBackend } from '../backend/demo.ts';
-import type { Region, Song, PublicDock } from '../backend/types.ts';
+import type { Hop, Region, Song, PublicDock } from '../backend/types.ts';
 import sampleMap from '../../../data/sample-map.json';
 import { MapScene, type FlightState } from '../map/MapScene.tsx';
 
@@ -9,8 +9,9 @@ export function SceneHarness() {
   const [data, setData] = useState<{ stars: Song[]; docks: PublicDock[]; regions: Region[] } | null>(null);
   const [current, setCurrent] = useState<string | null>(null);
   const [flight, setFlight] = useState<FlightState | null>(null);
+  const [route, setRoute] = useState<Hop[]>([]);
   const target = useRef<string | null>(null);
-  const encounters = useRef<string[]>([]);
+  const next = useRef<string[]>([]);
 
   useEffect(() => {
     const store = new Map<string, string>();
@@ -21,36 +22,37 @@ export function SceneHarness() {
       clear: () => store.clear(), key: () => null, length: 0,
     } as Storage;
     createDemoBackend(sampleMap as never, storage).loadMap().then((m) => {
-      const start = m.stars[0]!.id;
-      const picks: string[] = [];
       const s0 = m.stars[0]!;
-      const dist = (id: string) => { const t = m.stars.find((x) => x.id === id)!; return Math.hypot(t.x - s0.x, t.y - s0.y, t.z - s0.z); };
-      const sorted = [...m.docks].sort((a, b) => dist(a.songId) - dist(b.songId));
-      for (const d of sorted) {
-        if (d.songId !== start && !picks.includes(d.songId)) picks.push(d.songId);
-        if (picks.length === 3) break;
-      }
-      encounters.current = picks;
+      const dist = (s: Song) => Math.hypot(s.x - s0.x, s.y - s0.y);
+      const near = m.stars.filter((s) => s.id !== s0.id).sort((a, b) => dist(a) - dist(b));
+      next.current = near.slice(0, 4).map((s) => s.id);
+      setRoute([{ id: 'h0', parentHopId: null, songId: s0.id, kind: 'start', createdAt: new Date().toISOString() }]);
       setData(m);
-      setCurrent(start);
+      setCurrent(s0.id);
     });
   }, []);
 
   if (!data || !current) return null;
   const pos = (id: string) => data.stars.find((s) => s.id === id)!;
   const fly = () => {
-    const to = encounters.current[0]!;
+    const to = next.current[0]!;
     target.current = to;
     const a = pos(current), b = pos(to);
-    setFlight({ from: { x: a.x, y: a.y, z: a.z }, to: { x: b.x, y: b.y, z: b.z }, startedAt: performance.now() });
+    setFlight({ from: { x: a.x, y: a.y, z: 0 }, to: { x: b.x, y: b.y, z: 0 }, startedAt: performance.now() });
   };
   return (
     <div style={{ position: 'fixed', inset: 0, overflow: 'hidden' }}>
       <MapScene
         stars={data.stars} regions={data.regions} docks={data.docks} colourSeed="dev-seed"
-        currentSongId={current} encounterSongIds={encounters.current}
-        myShipColour="#ffd166" flight={flight}
-        onFlightEnd={() => { setCurrent(target.current!); setFlight(null); }}
+        currentSongId={current} myDockId={null} myShipColour="#ffd166"
+        routeHops={route} extraSongs={NO_EXTRA} parked={[]} arriving={null} flight={flight}
+        onFlightEnd={() => {
+          const to = target.current!;
+          next.current = next.current.slice(1);
+          setRoute((r) => [...r, { id: `h${r.length}`, parentHopId: r[r.length - 1]!.id, songId: to, kind: 'hitchhike', createdAt: new Date().toISOString() }]);
+          setCurrent(to);
+          setFlight(null);
+        }}
         onShipTap={(id) => console.log('ship', id)}
         onStarDoubleTap={(id) => console.log('star', id)}
       />
@@ -63,3 +65,5 @@ export function SceneHarness() {
     </div>
   );
 }
+
+const NO_EXTRA: ReadonlyMap<string, Song> = new Map();

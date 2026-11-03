@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { createFocus, createTapGesture, dockedPosition, FOCUS_MS, MAX_SHIPS_HERE, pickNearest } from './controls.ts';
+import {
+  createFocus, createTapGesture, DEFAULT_VISIBLE_WIDTH, distanceForWidth, FOCUS_MS, MAX_VISIBLE_WIDTH, MIN_VISIBLE_WIDTH, pickNearest,
+} from './controls.ts';
 
 const ptr = (t: number, x = 100, y = 100, over: Partial<{ isPrimary: boolean; pointerId: number }> = {}) =>
   ({ isPrimary: true, pointerId: 1, clientX: x, clientY: y, timeStamp: t, ...over });
@@ -80,15 +82,13 @@ describe('createFocus', () => {
   });
 });
 
-describe('dockedPosition slots', () => {
-  it('puts ships at the same star in different places; slot 0 is unchanged', () => {
-    const camera = new THREE.PerspectiveCamera();
-    camera.position.set(0, 0, 100);
-    const at = new THREE.Vector3();
-    const spots = Array.from({ length: MAX_SHIPS_HERE + 1 }, (_, slot) =>
-      dockedPosition(camera, at, 2, 0, new THREE.Vector3(), slot).toArray().map((v) => v.toFixed(3)).join());
-    expect(new Set(spots).size).toBe(MAX_SHIPS_HERE + 1);
-    expect(dockedPosition(camera, at, 2, 0, new THREE.Vector3()).toArray().map((v) => v.toFixed(3)).join())
-      .toBe(spots[0]);
+describe('distanceForWidth', () => {
+  it('is the distance at which the width fills the viewport', () => {
+    const d = distanceForWidth(600, 50, 0.5);
+    expect(2 * d * Math.tan((50 * Math.PI) / 360) * 0.5).toBeCloseTo(600);
+  });
+  it('orders the zoom limits', () => {
+    expect(distanceForWidth(MIN_VISIBLE_WIDTH, 50, 0.46)).toBeLessThan(distanceForWidth(DEFAULT_VISIBLE_WIDTH, 50, 0.46));
+    expect(distanceForWidth(DEFAULT_VISIBLE_WIDTH, 50, 0.46)).toBeLessThan(distanceForWidth(MAX_VISIBLE_WIDTH, 50, 0.46));
   });
 });

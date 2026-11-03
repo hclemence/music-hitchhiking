@@ -1,11 +1,11 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Region } from '../backend/types.ts';
 import { MAX_SKY_REGIONS, SKY_DESAT, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
 
-/** Plane edge in world units: covers +-3000 around the map centre, with margin for max zoom-out. */
-export const SKY_SIZE = 8000;
+/** Plane edge in world units: follows the camera; large enough that the horizon never shows its edge. */
+export const SKY_SIZE = 20000;
 /** Map units per shader unit; keeps the blend/warp scale independent of map size. */
 const SKY_SCALE = 1000;
 
@@ -87,13 +87,16 @@ export function Sky({ colourSeed, regions, quality = 'high', reducedMotion = fal
     material.uniforms.uCount!.value = u.count;
   }, [material, colourSeed, regions]);
 
-  useFrame(({ clock }) => {
+  const mesh = useRef<THREE.Mesh>(null);
+  useFrame(({ clock, camera }) => {
+    // The plane follows the camera so the horizon never shows its edge (the shader uses world coordinates).
+    mesh.current?.position.set(camera.position.x, -1, camera.position.z);
     // Low quality drops the ambient drift entirely.
     material.uniforms.uTime!.value = quality === 'low' ? 0 : clock.elapsedTime * (reducedMotion ? 0.25 : 1);
   });
 
   return (
-    <mesh position={[0, -1, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={-1000} frustumCulled={false}>
+    <mesh ref={mesh} position={[0, -1, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={-1000} frustumCulled={false}>
       <planeGeometry args={[SKY_SIZE, SKY_SIZE]} />
       <primitive object={material} attach="material" />
     </mesh>

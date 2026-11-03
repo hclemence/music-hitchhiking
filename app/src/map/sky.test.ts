@@ -60,11 +60,12 @@ describe('skyUniforms', () => {
     expect(Array.from(a.colours)).toEqual(Array.from(b.colours));
     expect(Array.from(skyUniforms('other', regions).colours)).not.toEqual(Array.from(a.colours));
   });
-  it('grades colours into range', () => {
-    const u = skyUniforms('s', Array.from({ length: 8 }, (_, i) => region(i)));
-    for (let i = 0; i < u.count * 3; i++) {
-      expect(u.colours[i]!).toBeGreaterThanOrEqual(SKY_MIN - 1e-6);
-      expect(u.colours[i]!).toBeLessThanOrEqual(SKY_MAX + 1e-6);
-    }
+  it('passes the raw palette colours (the shader grades the blend once)', () => {
+    const regions = Array.from({ length: 8 }, (_, i) => region(i));
+    const u = skyUniforms('s', regions);
+    const palette = regionPalette('s', 8, []);
+    palette.forEach((h, i) => {
+      hex(h).forEach((v, k) => expect(u.colours[i * 3 + k]!).toBeCloseTo(v, 6));
+    });
   });
 });
