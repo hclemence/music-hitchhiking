@@ -5,6 +5,8 @@ import {
   generateInviteCode,
   hashInviteCode,
   recoveryEmail,
+  secretFromBase32,
+  secretToBase32,
 } from './recovery.ts';
 
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -83,5 +85,23 @@ describe('invite codes', () => {
     expect(await hashInviteCode('ab-cd 12')).toBe(await hashInviteCode('ABCD12'));
     expect(await hashInviteCode('ABCD12')).toMatch(/^[0-9a-f]{64}$/);
     expect(await hashInviteCode('ABCD12')).not.toBe(await hashInviteCode('ABCD13'));
+  });
+});
+
+describe('secret helpers', () => {
+  it('secretToBase32 is the secret the recovery code carries', () => {
+    expect(secretToBase32(SECRET)).toMatch(/^[0-9A-HJKMNP-TV-Z]{16}$/);
+    expect(decodeRecoveryCode(encodeRecoveryCode(USER_ID, SECRET))!.secret).toBe(secretToBase32(SECRET));
+  });
+
+  it('round-trips through secretFromBase32', () => {
+    expect([...secretFromBase32(secretToBase32(SECRET))!]).toEqual([...SECRET]);
+  });
+
+  it('refuses malformed secrets', () => {
+    for (const bad of ['', 'ABC', secretToBase32(SECRET).toLowerCase(), `${secretToBase32(SECRET)}0`, 'UUUUUUUUUUUUUUUU', 'I'.repeat(16)]) {
+      expect(secretFromBase32(bad)).toBeNull();
+    }
+    expect(() => secretToBase32(new Uint8Array(9))).toThrow();
   });
 });

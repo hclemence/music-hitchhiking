@@ -84,6 +84,18 @@ export function decodeRecoveryCode(code: string): { userId: string; secret: stri
   };
 }
 
+/** The recovery password for 10 secret bytes: 16 Crockford base32 characters. */
+export function secretToBase32(secret: Uint8Array): string {
+  if (secret.length !== SECRET_BYTES) throw new Error(`secret must be ${SECRET_BYTES} bytes`);
+  return base32(secret);
+}
+
+/** Inverse of `secretToBase32` (canonical upper case only); null if `text` is not a valid secret. */
+export function secretFromBase32(text: string): Uint8Array | null {
+  if (!/^[0-9A-HJKMNP-TV-Z]{16}$/.test(text)) return null;
+  return unbase32(text);
+}
+
 /** Synthetic sign-in address for a recoverable account. */
 export function recoveryEmail(userId: string): string {
   return `${userId}@users.music-hitchhiking.invalid`;

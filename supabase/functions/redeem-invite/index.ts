@@ -1,9 +1,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import {
-  decodeRecoveryCode,
   encodeRecoveryCode,
   hashInviteCode,
   recoveryEmail,
+  secretFromBase32,
+  secretToBase32,
 } from '../_shared/core/recovery.ts';
 
 const corsHeaders = {
@@ -40,19 +41,38 @@ Deno.serve(async (req) => {
   const userId = auth.user.id;
 
   let code: unknown;
+  let secretText: unknown;
   try {
-    ({ code } = await req.json());
+    ({ code, secret: secretText } = await req.json());
   } catch {
     code = undefined;
   }
   if (typeof code !== 'string' || code.trim() === '') return json(400, { error: 'invalid_invite' });
+  // The client generated the secret and has already stored its recovery code, so a lost response
+  // cannot lose the account. The password is the secret itself.
+  const secret = typeof secretText === 'string' ? secretFromBase32(secretText) : null;
+  if (!secret) return json(400, { error: 'bad_secret' });
+  const password = secretToBase32(secret);
+  const recoveryCode = encodeRecoveryCode(userId, secret);
 
   const admin = createClient(url, serviceKey, clientOptions);
+  const credentials = { email: recoveryEmail(userId), password, email_confirm: true };
 
-  // Members stay members; do not spend an invite on them.
   const existing = await admin.from('profiles').select('user_id').eq('user_id', userId).maybeSingle();
   if (existing.error) return json(500, { error: 'server_error' });
-  if (existing.data) return json(400, { error: 'already_member' });
+  if (existing.data) {
+    // Members stay members; do not spend an invite on them. But a member whose auth user has no
+    // email yet (a crash between claiming the invite and setting credentials) finishes setup.
+    const user = await admin.auth.admin.getUserById(userId);
+    if (user.error || !user.data.user) return json(500, { error: 'server_error' });
+    if (user.data.user.email) return json(400, { error: 'already_member' });
+    const finished = await admin.auth.admin.updateUserById(userId, credentials);
+    if (finished.error) {
+      console.error(`redeem-invite: finishing setup failed for ${userId}: ${finished.error.message}`);
+      return json(500, { error: 'server_error' });
+    }
+    return json(200, { recoveryCode });
+  }
 
   const codeHash = await hashInviteCode(code);
   const redeemed = await admin.rpc('redeem_invite', { p_user_id: userId, p_code_hash: codeHash });
@@ -63,26 +83,23 @@ Deno.serve(async (req) => {
   }
   if (redeemed.data !== true) return json(400, { error: 'invalid_invite' });
 
-  // Turn the anonymous user into a recoverable account: synthetic email + random secret.
-  const secret = new Uint8Array(10);
-  crypto.getRandomValues(secret);
-  const recoveryCode = encodeRecoveryCode(userId, secret);
-  const password = decodeRecoveryCode(recoveryCode)!.secret;
-
-  const updated = await admin.auth.admin.updateUserById(userId, {
-    email: recoveryEmail(userId),
-    password,
-    email_confirm: true,
-  });
+  // Turn the anonymous user into a recoverable account: synthetic email + the client's secret.
+  const updated = await admin.auth.admin.updateUserById(userId, credentials);
   if (updated.error) {
-    // Undo: no profile, invite usable again.
+    console.error(`redeem-invite: setting credentials failed for ${userId}: ${updated.error.message}`);
+    // Undo: no profile, invite usable again. Only free the invite if the profile is really gone,
+    // otherwise the member would be left with a spendable invite and no way to retry.
     const profile = await admin.from('profiles').delete().eq('user_id', userId);
-    const invite = await admin
-      .from('invites')
-      .update({ redeemed_by: null, redeemed_at: null })
-      .eq('code_hash', codeHash)
-      .eq('redeemed_by', userId);
-    if (profile.error || invite.error) console.error('redeem-invite: rollback incomplete');
+    if (profile.error) {
+      console.error(`redeem-invite: rollback incomplete for ${userId}, profile not deleted: ${profile.error.message}`);
+    } else {
+      const invite = await admin
+        .from('invites')
+        .update({ redeemed_by: null, redeemed_at: null })
+        .eq('code_hash', codeHash)
+        .eq('redeemed_by', userId);
+      if (invite.error) console.error(`redeem-invite: rollback incomplete for ${userId}, invite not freed: ${invite.error.message}`);
+    }
     return json(500, { error: 'server_error' });
   }
 
