@@ -15,22 +15,33 @@ export function arcPoint(
 }
 
 const RING_CAPACITY = 4096;
+/** Frame gaps longer than this are pauses (tab return, a stall), not slowness. */
+export const MAX_SAMPLE_MS = 250;
+/** After mount and after each pause, frames are not judged for this long (shader compiles, resumes). */
+export const WARMUP_MS = 2000;
 
 /**
  * Frame-time watchdog. `sample(dtMs)` goes 'low' once a full window's average frame time exceeds
  * the threshold, and back to 'high' when a full window averages under 0.8 x threshold.
- * Allocation-free after creation.
+ * A sample over `MAX_SAMPLE_MS` is a pause: it is dropped, the window is cleared and the warm-up
+ * starts again; frames during the warm-up are not judged. `restart()` does the same (for example on
+ * a return to the foreground). Allocation-free after creation.
  */
-export function createQualityMonitor(opts: { thresholdMs?: number; windowMs?: number } = {}) {
-  const { thresholdMs = 22, windowMs = 3000 } = opts;
+export function createQualityMonitor(opts: { thresholdMs?: number; windowMs?: number; warmupMs?: number; maxSampleMs?: number } = {}) {
+  const { thresholdMs = 22, windowMs = 3000, warmupMs = WARMUP_MS, maxSampleMs = MAX_SAMPLE_MS } = opts;
   const ring = new Float32Array(RING_CAPACITY);
   let head = 0; // index of the oldest sample
   let count = 0;
   let sum = 0;
+  let warm = warmupMs; // warm-up time still to go
   let quality: 'high' | 'low' = 'high';
+  const restart = () => { head = 0; count = 0; sum = 0; warm = warmupMs; };
   return {
+    restart,
     sample(dtMs: number): 'high' | 'low' {
       if (!(dtMs >= 0) || !Number.isFinite(dtMs)) return quality;
+      if (dtMs > maxSampleMs) { restart(); return quality; }
+      if (warm > 0) { warm -= dtMs; return quality; }
       if (count === RING_CAPACITY) { sum -= ring[head]!; head = (head + 1) % RING_CAPACITY; count--; }
       ring[(head + count) % RING_CAPACITY] = dtMs;
       count++;
@@ -45,6 +56,18 @@ export function createQualityMonitor(opts: { thresholdMs?: number; windowMs?: nu
       return quality;
     },
   };
+}
+
+/** Canvas pixel ratio per quality: 1 when low, the device ratio capped at 2 when high. */
+export function dprFor(quality: 'high' | 'low', deviceRatio: number): number {
+  if (quality === 'low') return 1;
+  return Math.min(2, Math.max(1, Number.isFinite(deviceRatio) ? deviceRatio : 1));
+}
+
+/** Move `current` toward `target` by at most `dt / durationMs` of the 0..1 range (a linear ease in or out). */
+export function easeToward(current: number, target: number, dtMs: number, durationMs: number): number {
+  const step = dtMs / durationMs;
+  return current < target ? Math.min(target, current + step) : Math.max(target, current - step);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -78,16 +101,17 @@ function ambientFor(dockId: string): Ambient {
  */
 export function ambientOffset(
   dockId: string, tMs: number, out: { dx: number; dy: number; dh: number } = { dx: 0, dy: 0, dh: 0 },
-  drift = true,
+  driftAmp: boolean | number = 1,
 ): { dx: number; dy: number; dh: number } {
   const a = ambientFor(dockId);
   const la = (tMs / a.loopMs) * Math.PI * 2 + a.loopPhase;
   let dx = Math.cos(la) * LOOP_RADIUS, dy = Math.sin(la) * LOOP_RADIUS;
   const into = (tMs + a.driftPhase * a.driftEveryMs) % a.driftEveryMs;
-  if (drift && into < DRIFT_MS) {
+  const amp = driftAmp === true ? 1 : driftAmp === false ? 0 : driftAmp;
+  if (amp > 0 && into < DRIFT_MS) {
     const u = into / DRIFT_MS;
     const s = Math.sin(Math.PI * u);
-    const k = DRIFT_DISTANCE * s * s;
+    const k = DRIFT_DISTANCE * s * s * amp;
     // each drift picks a slightly different heading, derived from the cycle number
     const cycle = Math.floor((tMs + a.driftPhase * a.driftEveryMs) / a.driftEveryMs);
     const ang = a.driftAngle + cycle * 2.399963;

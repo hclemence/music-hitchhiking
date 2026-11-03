@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { PublicDock } from '@core/types.ts';
 import type { ShownEncounter } from '../state/useExplore.ts';
-import { ambientOffset, arcPoint, fanSlot, parkingSlot, selectShipLod } from './motion.ts';
+import { ambientOffset, arcPoint, easeToward, fanSlot, parkingSlot, selectShipLod } from './motion.ts';
 import { shipWorldLength } from './shuttle.ts';
 import { createShipTapGate, MAP_FOV, pickNearest } from './controls.ts';
 import { buildEntries, type Entry } from './shipEntries.ts';
@@ -18,6 +18,8 @@ const TAP_RADIUS_PX = 24;
 const LOW_MAX_FULL = 40;
 const MAX_FULL = 150;
 const LIFT = 0.25; // ship centre above the plane, in lengths
+/** Drift amplitude eases in or out over this long when the quality changes (no snap). */
+const DRIFT_EASE_MS = 1000;
 const DRIFT_SPEED = 3.5; // units/s above which a ship turns to face where it is going
 
 export type ShipsProps = {
@@ -75,6 +77,7 @@ export function Ships(props: ShipsProps) {
   if (qualityKey.current !== quality) { qualityKey.current = quality; work.dirty = true; }
   useEffect(() => { work.dirty = true; }, [work]);
 
+  const driftAmp = useRef(quality === 'high' ? 1 : 0);
   const propsRef = useRef(props);
   propsRef.current = props;
 
@@ -132,7 +135,8 @@ export function Ships(props: ShipsProps) {
     }
     const lenChanged = Math.abs(len - work.lastLen) > work.lastLen * 0.005;
     work.lastLen = len;
-    const drift = p.quality === 'high';
+    driftAmp.current = easeToward(driftAmp.current, p.quality === 'high' ? 1 : 0, Math.min(delta, 0.1) * 1000, DRIFT_EASE_MS);
+    const drift = driftAmp.current;
     const t = (p.reducedMotion ? now * 0.25 : now);
     const k = Math.min(1, delta * 6);
     const pose = p.pose.current;

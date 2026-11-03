@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ambientOffset, arcPoint, createQualityMonitor, fanSlot, parkingSlot, selectShipLod } from './motion.ts';
+import { ambientOffset, arcPoint, createQualityMonitor, dprFor, easeToward, fanSlot, parkingSlot, selectShipLod } from './motion.ts';
 
 describe('arcPoint', () => {
   const from = { x: 10, y: 20 }, to = { x: 70, y: 100 };
@@ -36,23 +36,73 @@ describe('createQualityMonitor', () => {
     expect(feed(createQualityMonitor(), 10000, 16)).toBe('high');
   });
   it('goes low after 3 s of 30 ms frames, not before', () => {
-    const m = createQualityMonitor();
+    const m = createQualityMonitor({ warmupMs: 0 });
     expect(feed(m, 2000, 30)).toBe('high');
     expect(feed(m, 1020, 30)).toBe('low');
   });
   it('recovers after a window under 0.8 x threshold', () => {
-    const m = createQualityMonitor();
+    const m = createQualityMonitor({ warmupMs: 0 });
     expect(feed(m, 3300, 30)).toBe('low');
     expect(feed(m, 1000, 20)).toBe('low'); // between 17.6 and 22: stays low
     expect(feed(m, 3300, 16)).toBe('high');
   });
   it('honours custom threshold and window', () => {
-    const m = createQualityMonitor({ thresholdMs: 10, windowMs: 1000 });
+    const m = createQualityMonitor({ thresholdMs: 10, windowMs: 1000, warmupMs: 0 });
     expect(feed(m, 1100, 12)).toBe('low');
+  });
+  it('ignores a single huge sample (tab return) amid good frames', () => {
+    const m = createQualityMonitor();
+    feed(m, 3000, 16); // warm-up and a good start
+    expect(m.sample(5000)).toBe('high');
+    expect(feed(m, 10000, 16)).toBe('high');
+  });
+  it('ignores slow frames during the 2 s warm-up, then judges', () => {
+    const m = createQualityMonitor();
+    expect(feed(m, 2000, 100)).toBe('high'); // slow start (shader compiles): not judged
+    expect(feed(m, 2900, 16)).toBe('high');
+    expect(feed(m, 3300, 30)).toBe('low');
+  });
+  it('warms up again after a pause or restart()', () => {
+    const m = createQualityMonitor();
+    feed(m, 3000, 16);
+    m.sample(60000);
+    expect(feed(m, 2000, 100)).toBe('high');
+    feed(m, 3000, 16);
+    m.restart();
+    expect(feed(m, 2000, 100)).toBe('high');
+  });
+});
+
+describe('dprFor', () => {
+  it('is 1 when low, and the device ratio capped to [1, 2] when high', () => {
+    expect(dprFor('low', 3)).toBe(1);
+    expect(dprFor('high', 3)).toBe(2);
+    expect(dprFor('high', 1.5)).toBe(1.5);
+    expect(dprFor('high', 0.5)).toBe(1);
+    expect(dprFor('high', NaN)).toBe(1);
+  });
+});
+
+describe('easeToward', () => {
+  it('moves linearly and stops at the target', () => {
+    expect(easeToward(0, 1, 250, 1000)).toBeCloseTo(0.25);
+    expect(easeToward(0.9, 1, 250, 1000)).toBe(1);
+    expect(easeToward(1, 0, 250, 1000)).toBeCloseTo(0.75);
+    expect(easeToward(0.1, 0, 250, 1000)).toBe(0);
   });
 });
 
 describe('ambientOffset', () => {
+  it('scales the drift by an amplitude between 0 and 1', () => {
+    let ok = false;
+    for (let t = 0; t < 120000 && !ok; t += 50) {
+      const full = ambientOffset('a', t, undefined, 1), half = ambientOffset('a', t, undefined, 0.5), none = ambientOffset('a', t, undefined, false);
+      const r = (o: { dx: number; dy: number }, base: { dx: number; dy: number }) => Math.hypot(o.dx - base.dx, o.dy - base.dy);
+      const df = r(full, none);
+      if (df > 5) { expect(r(half, none)).toBeCloseTo(df / 2, 5); ok = true; }
+    }
+    expect(ok).toBe(true);
+  });
   it('is deterministic per id and differs between ids', () => {
     expect(ambientOffset('a', 12345)).toEqual(ambientOffset('a', 12345));
     expect(ambientOffset('a', 12345)).not.toEqual(ambientOffset('b', 12345));

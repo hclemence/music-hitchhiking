@@ -18,17 +18,21 @@ const vertex = /* glsl */ `
   }
 `;
 
-export function skyFragment(quality: 'high' | 'low'): string {
-  const octaves = quality === 'low' ? 2 : 5;
+/** Most fbm octaves the shader runs (high quality); low quality runs fewer through `uOctaves`. */
+export const SKY_OCTAVES = { high: 5, low: 2 } as const;
+
+/** One shader for every quality: the octave count is a uniform, so a quality change never recompiles. */
+export function skyFragment(): string {
   const f = (n: number) => n.toFixed(3);
   return /* glsl */ `
   precision highp float;
   #define MAX_REGIONS ${MAX_SKY_REGIONS}
-  #define OCTAVES ${octaves}
+  #define MAX_OCTAVES ${SKY_OCTAVES.high}
   uniform vec2 uCentres[MAX_REGIONS];
   uniform vec3 uColours[MAX_REGIONS];
   uniform int uCount;
   uniform float uTime;
+  uniform int uOctaves;
   uniform vec2 uCentroid;
   uniform float uRadius;
   uniform vec3 uHorizon;
@@ -36,7 +40,7 @@ export function skyFragment(quality: 'high' | 'low'): string {
   float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
   float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
     return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
-  float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<OCTAVES;i++){v+=a*noise(p);p*=2.03;a*=.5;}return v;}
+  float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<MAX_OCTAVES;i++){if(i>=uOctaves)break;v+=a*noise(p);p*=2.03;a*=.5;}return v;}
   float fbm2(vec2 p){return .6*noise(p)+.4*noise(p*2.03+3.1);}
   vec3 grade(vec3 c){
     float l=dot(c,vec3(.299,.587,.114));
@@ -67,15 +71,16 @@ export function skyFragment(quality: 'high' | 'low'): string {
 `;
 }
 
-export function buildSkyMaterial(quality: 'high' | 'low'): THREE.ShaderMaterial {
+export function buildSkyMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     vertexShader: vertex,
-    fragmentShader: skyFragment(quality),
+    fragmentShader: skyFragment(),
     uniforms: {
       uCentres: { value: new Float32Array(MAX_SKY_REGIONS * 2) },
       uColours: { value: new Float32Array(MAX_SKY_REGIONS * 3) },
       uCount: { value: 0 },
       uTime: { value: 0 },
+      uOctaves: { value: SKY_OCTAVES.high },
       uCentroid: { value: new THREE.Vector2() },
       uRadius: { value: 1e9 },
       uHorizon: { value: new THREE.Vector3(0.4, 0.4, 0.4) },
@@ -85,14 +90,27 @@ export function buildSkyMaterial(quality: 'high' | 'low'): THREE.ShaderMaterial 
   });
 }
 
+/** Switch the sky's quality in place (a uniform, not a new material). */
+export function applySkyQuality(material: THREE.ShaderMaterial, quality: 'high' | 'low'): void {
+  material.uniforms.uOctaves!.value = SKY_OCTAVES[quality];
+}
+
+/** The sky's clock: runs while quality is high, holds its value while low. A long frame gap counts as 100 ms. */
+export function advanceSkyTime(time: number, deltaS: number, quality: 'high' | 'low', reducedMotion: boolean): number {
+  if (quality === 'low') return time;
+  return time + Math.min(Math.max(deltaS, 0), 0.1) * (reducedMotion ? 0.25 : 1);
+}
+
 export function Sky({ colourSeed, regions, quality = 'high', reducedMotion = false }: {
   colourSeed: string;
   regions: readonly Region[];
   quality?: 'high' | 'low';
   reducedMotion?: boolean;
 }) {
-  const material = useMemo(() => buildSkyMaterial(quality), [quality]);
+  const material = useMemo(() => buildSkyMaterial(), []);
   useEffect(() => () => material.dispose(), [material]);
+  useEffect(() => applySkyQuality(material, quality), [material, quality]);
+  const skyTime = useRef(0);
 
   useEffect(() => {
     const u = skyUniforms(colourSeed, regions);
@@ -114,7 +132,7 @@ export function Sky({ colourSeed, regions, quality = 'high', reducedMotion = fal
   const count = useRef(0);
   const seeded = useRef(false);
   const fwd = useMemo(() => new THREE.Vector3(), []);
-  useFrame(({ clock, camera }) => {
+  useFrame(({ camera }, delta) => {
     // The plane follows the camera so the horizon never shows its edge (the shader uses world coordinates).
     mesh.current?.position.set(camera.position.x, -1, camera.position.z);
     // Horizon colour: the nearest region to where the camera looks, eased so it never pops.
@@ -132,8 +150,9 @@ export function Sky({ colourSeed, regions, quality = 'high', reducedMotion = fal
       if (!seeded.current) { v.set(h[0], h[1], h[2]); seeded.current = true; }
       else v.set(v.x + (h[0] - v.x) * 0.05, v.y + (h[1] - v.y) * 0.05, v.z + (h[2] - v.z) * 0.05);
     }
-    // Low quality drops the ambient drift entirely.
-    material.uniforms.uTime!.value = quality === 'low' ? 0 : clock.elapsedTime * (reducedMotion ? 0.25 : 1);
+    // Low quality freezes the clouds where they are (no jump back to 0); they resume from there.
+    skyTime.current = advanceSkyTime(skyTime.current, delta, quality, reducedMotion);
+    material.uniforms.uTime!.value = skyTime.current;
   });
 
   return (
