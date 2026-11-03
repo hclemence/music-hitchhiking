@@ -194,6 +194,44 @@ button.big { width: 100%; min-height: 52px; font-size: 17px; }
   background: var(--error);
 }
 
+/* ---- Encounter pop-up ---- */
+.popup {
+  margin: 0 var(--gutter);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: popup-up 280ms ease-out;
+}
+.popup-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--tap); }
+.popup-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
+.popup-close {
+  flex: none;
+  padding: 0;
+  margin-right: -8px;
+  font-size: 24px;
+  line-height: 1;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.popup-song { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.popup-song .card-titles { display: flex; flex-direction: column; gap: 2px; }
+.popup h3 { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.popup .ship-badge { width: 56px; height: 56px; }
+.popup .ship-dot { width: 28px; height: 28px; margin: 0 14px; }
+.popup-empty { text-align: center; padding: 10px 4px 0; }
+.popup-actions.single { display: flex; justify-content: center; }
+.popup-actions.single button { min-width: 120px; }
+@keyframes popup-up {
+  from { transform: translateY(28px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .popup { animation: none; } }
+
 /* ---- Route sheet ---- */
 .sheet-backdrop {
   position: fixed;

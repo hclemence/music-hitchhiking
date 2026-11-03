@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Backend, Song } from '../backend/types.ts';
 import { EncounterCard } from './EncounterCard.tsx';
 import { MapScene } from '../map/MapScene.tsx';
-import { useExplore, type ExploreModel, type ShownEncounter } from '../state/useExplore.ts';
-import { EncounterBar } from './EncounterBar.tsx';
+import { useExplore, type ExploreModel } from '../state/useExplore.ts';
+import { EncounterPopup } from './EncounterPopup.tsx';
 import { MiniMap } from './MiniMap.tsx';
 import { OfflineBanner } from './OfflineBanner.tsx';
 import { latestHopAtSong } from '../map/route.ts';
@@ -16,7 +16,6 @@ type Props = { backend: Backend; tz: string; onNavigate: (screen: Screen) => voi
 };
 
 const SEARCH_DEBOUNCE_MS = 250;
-const NO_PARKED: ShownEncounter[] = [];
 
 export function Explore({ backend, tz, onNavigate, reloadToken, jumpRequest }: Props) {
   const x = useExplore(backend, tz, { reloadToken });
@@ -72,7 +71,6 @@ export function Explore({ backend, tz, onNavigate, reloadToken, jumpRequest }: P
 }
 
 function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: ExploreModel; onNavigate: Props['onNavigate'] }) {
-  const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
   const [hereDockId, setHereDockId] = useState<string | null>(null);
   const busy = x.pending || x.flight !== null;
   const homeId = x.profile?.homeSongId ?? null;
@@ -90,6 +88,14 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
   const hereCard = hereDock && current
     ? { songId: current.id, song: current, dock: hereDock, othersCount: 0, distance: 0 }
     : null;
+  const enc = x.encounter;
+  // The ship flying over to you: Ships times its arc from `startedAt` on the performance clock.
+  const arrivingId = enc.phase === 'arriving' ? enc.current?.dock.id ?? null : null;
+  const arriving = useMemo(
+    () => (arrivingId ? { dockId: arrivingId, startedAt: performance.now() } : null),
+    [arrivingId],
+  );
+  const shownPopup = enc.popup;
 
   return (
     <>
@@ -105,21 +111,24 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           myShipColour={x.profile!.shipColour}
           routeHops={x.hops}
           extraSongs={x.extraSongs}
-          parked={NO_PARKED}
-          arriving={null}
+          parked={enc.parked}
+          arriving={arriving}
           flight={x.flight}
           onVisitedTap={(songId) => {
+            if (songId === current.id) return; // already here: never move to a later hop at this song
             const hopId = latestHopAtSong(x.hops, songId);
             if (hopId && !busy && hopId !== x.currentHopId) x.actions.moveTo(hopId);
           }}
           onFlightEnd={x.actions.endFlight}
           onShipTap={(dockId) => {
-            if (x.hereDocks.some((d) => d.id === dockId)) {
+            // A ship parked beside you reopens its pop-up; one docked at your star shows its card.
+            if (enc.parked.some((e) => e.dock.id === dockId)) {
+              setHereDockId(null);
+              x.actions.openEncounter(dockId);
+            } else if (x.hereDocks.some((d) => d.id === dockId)) {
+              x.actions.closeEncounter();
               setHereDockId(dockId);
-              return;
             }
-            setHereDockId(null);
-            setSelectedSongId(map.docks.find((d) => d.id === dockId)?.songId ?? null);
           }}
         />
       )}
@@ -152,14 +161,17 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
               onClose={() => setHereDockId(null)}
             />
           </div>
-        ) : (
-          <EncounterBar
-            encounters={x.encounters}
-            selectedSongId={selectedSongId}
-            kept={x.liked}
-            disabled={busy}
-            onLike={x.actions.like}
-            onHitchhike={x.actions.hitchhike}
+        ) : (shownPopup || enc.nobodyLeft) && (
+          <EncounterPopup
+            key={shownPopup?.dock.id ?? 'none'}
+            encounter={shownPopup}
+            nobodyLeft={enc.nobodyLeft}
+            kept={shownPopup ? x.liked.has(shownPopup.dock.id) : false}
+            pending={busy}
+            onLike={() => { if (shownPopup) x.actions.like(shownPopup); }}
+            onHitchhike={() => { if (shownPopup) x.actions.hitchhike(shownPopup); }}
+            onClose={x.actions.closeEncounter}
+            thumbnail={arrivingId === null || arrivingId !== shownPopup?.dock.id}
           />
         )}
         <nav className="toolbar" aria-label="Actions">

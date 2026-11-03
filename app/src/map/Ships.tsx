@@ -8,11 +8,11 @@ import { shipWorldLength } from './shuttle.ts';
 import { createShipTapGate, MAP_FOV, pickNearest } from './controls.ts';
 import { buildEntries, type Entry } from './shipEntries.ts';
 import { buildSets } from './shipSets.ts';
+import { FLY_IN_MS } from '../state/encounterFlow.ts';
 
 /** Where your own ship is this frame (ground x/y, height h, ship length), written by MyShip. */
 export type MyPose = { x: number; y: number; h: number; len: number };
 
-export const FLY_IN_MS = 1200;
 const RESELECT_MS = 250;
 const TAP_RADIUS_PX = 24;
 const LOW_MAX_FULL = 40;

@@ -53,9 +53,10 @@ test('demo build reaches the map with the network blocked', async ({ page }) => 
   const here = page.getByLabel('You are here').locator('.now-title');
   await expect(here).toHaveText('Stairway to Heaven');
   await expect(page.locator('canvas')).toBeVisible();
-  const cards = page.getByRole('region', { name: 'Encounters' }).locator('article.card');
-  await expect(cards).not.toHaveCount(0);
-  await expect(cards.first().getByText('Sample')).toBeVisible();
+  // About 1.5 s after arriving, the nearest ship flies over and its pop-up opens.
+  const popup = page.getByRole('dialog', { name: "You've encountered someone" });
+  await expect(popup).toBeVisible({ timeout: 15000 });
+  await expect(popup.getByText('Sample')).toBeVisible();
   // Demo has no other people: no History or Inbox.
   const toolbar = page.getByRole('navigation', { name: 'Actions' });
   await expect(toolbar.getByRole('button', { name: 'History' })).toHaveCount(0);
@@ -74,8 +75,8 @@ test('demo build reaches the map with the network blocked', async ({ page }) => 
   await expect(here).toHaveText('Stairway to Heaven');
 
   // One hitchhike, to see the flight land.
-  const title = (await cards.first().locator('h3').textContent())!;
-  await cards.first().getByRole('button', { name: 'Hitchhike' }).click();
+  const title = (await popup.locator('h3').textContent())!;
+  await popup.getByRole('button', { name: 'Hitchhike' }).click();
   await expect(here).toHaveText(title);
   await expect(toolbar.getByRole('button', { name: 'Wait' })).toBeEnabled();
   await page.screenshot({ path: join(SHOTS, 'e2e-demo-04-hitchhiked.png') });
