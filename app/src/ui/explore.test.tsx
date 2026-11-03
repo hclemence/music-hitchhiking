@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import sampleMapJson from '../../../data/sample-map.json';
 import type { SampleMap } from '../../../scripts/sample-map.ts';
@@ -632,5 +632,58 @@ describe('Shell', () => {
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect((await backend.getMyDock())!.songId).toBe(chosen.id);
     await vi.waitFor(() => expect(loads).toHaveBeenCalled());
+  });
+});
+
+describe('Shell history and inbox', () => {
+  const mk = () => ({
+    ...demo(),
+    mode: 'live' as const,
+    getTraces: vi.fn(async () => [{
+      id: 't1', originSongId: HOME.id, originTitle: 'Origin', originArtist: 'Maker', shipColour: '#ff8844', brightness: 0.5,
+    }]),
+    findTrace: vi.fn(async () => null),
+    sendSuggestion: vi.fn(async () => {}),
+    getInbox: vi.fn(async () => [{
+      id: 'i1', kind: 'suggestion' as const, songId: HOME.id, title: 'Sugg', artist: 'Band',
+      shipColour: '#44aaff', replyTraceId: null, createdAt: '2026-11-03T10:00:00Z', seenAt: null,
+    }]),
+    markInboxSeen: vi.fn(async () => {}),
+  }) as unknown as Backend;
+
+  it('opens History and Inbox as sheets; opening the Inbox marks seen and the dot clears on close', async () => {
+    const backend = mk();
+    await backend.setHome(HOME.id);
+    await backend.startJourney(TZ, HOME.id);
+    render(<Shell backend={backend} tz={TZ} />);
+    const inboxBtn = await screen.findByRole('button', { name: 'Inbox (new)' });
+    await userEvent.click(inboxBtn);
+    expect(await screen.findByRole('dialog', { name: 'Inbox' })).toBeInTheDocument();
+    expect(await screen.findByText('Sugg')).toBeInTheDocument();
+    expect(backend.markInboxSeen).toHaveBeenCalledTimes(1);
+    (backend.getInbox as Mock).mockImplementation(async () => [{
+      id: 'i1', kind: 'suggestion', songId: HOME.id, title: 'Sugg', artist: 'Band',
+      shipColour: '#44aaff', replyTraceId: null, createdAt: '2026-11-03T10:00:00Z', seenAt: '2026-11-03T11:00:00Z',
+    }]);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(await screen.findByRole('button', { name: 'Inbox' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(await screen.findByText('Origin')).toBeInTheDocument();
+  });
+
+  it('Visit in the Inbox closes the sheet and hops to that song', async () => {
+    const backend = mk();
+    const other = sample.songs[5]!;
+    (backend.getInbox as Mock).mockImplementation(async () => [{
+      id: 'i1', kind: 'suggestion', songId: other.id, title: other.title, artist: other.artist,
+      shipColour: '#44aaff', replyTraceId: null, createdAt: '2026-11-03T10:00:00Z', seenAt: null,
+    }]);
+    await backend.setHome(HOME.id);
+    await backend.startJourney(TZ, HOME.id);
+    render(<Shell backend={backend} tz={TZ} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Inbox (new)' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Visit' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(scene.props?.currentSongId).toBe(other.id));
   });
 });

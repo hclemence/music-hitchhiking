@@ -8,12 +8,22 @@ import { OfflineBanner } from './OfflineBanner.tsx';
 
 export type Screen = 'explore' | 'history' | 'inbox' | 'ship' | 'dock';
 
-type Props = { backend: Backend; tz: string; onNavigate: (screen: Screen) => void; reloadToken?: number };
+type Props = { backend: Backend; tz: string; onNavigate: (screen: Screen) => void; reloadToken?: number;
+  /** A fly-to request from a sheet (Find, inbox Visit): each new `n` makes one jump hop. */
+  jumpRequest?: { songId: string; n: number } | null;
+};
 
 const SEARCH_DEBOUNCE_MS = 250;
 
-export function Explore({ backend, tz, onNavigate, reloadToken }: Props) {
+export function Explore({ backend, tz, onNavigate, reloadToken, jumpRequest }: Props) {
   const x = useExplore(backend, tz, { reloadToken });
+  const jumped = useRef(jumpRequest?.n ?? 0);
+  const jumpTo = x.actions.jumpTo;
+  useEffect(() => {
+    if (!jumpRequest || jumpRequest.n === jumped.current || x.status !== 'ready') return;
+    jumped.current = jumpRequest.n;
+    jumpTo(jumpRequest.songId);
+  }, [jumpRequest, x.status, jumpTo]);
   const navigated = useRef(false);
   useEffect(() => {
     if (x.status === 'noHome' && !navigated.current) {

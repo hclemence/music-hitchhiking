@@ -11,6 +11,10 @@ const SceneHarness = import.meta.env.DEV
   ? lazy(() => import('./dev/SceneHarness.tsx').then((m) => ({ default: m.SceneHarness })))
   : null;
 
+const SheetHarness = import.meta.env.DEV
+  ? lazy(() => import('./dev/SheetHarness.tsx').then((m) => ({ default: m.SheetHarness })))
+  : null;
+
 let storageSingleton: Storage | null = null;
 function localStore(): Storage {
   return (storageSingleton ??= makeStore());
@@ -56,6 +60,8 @@ export function App() {
   if (import.meta.env.DEV && SceneHarness && new URLSearchParams(location.search).has('scene')) {
     return <Suspense fallback={null}><SceneHarness /></Suspense>;
   }
+  const sheet = import.meta.env.DEV ? new URLSearchParams(location.search).get('sheet') : null;
+  if (sheet && SheetHarness) return <Suspense fallback={null}><SheetHarness which={sheet} /></Suspense>;
   return <Main />;
 }
 

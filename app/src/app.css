@@ -301,3 +301,22 @@ button.big { width: 100%; min-height: 52px; font-size: 17px; }
 .check input { width: 22px; height: 22px; accent-color: var(--accent); }
 .onboard { max-width: 480px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 32px) 20px 20px; display: flex; flex-direction: column; gap: 14px; height: 100%; overflow-y: auto; }
 .onboard h1 { font-size: 24px; }
+
+/* ---- History and Inbox ---- */
+.history { display: flex; flex-direction: column; gap: 12px; }
+.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.row { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.row[data-unseen='true'] { border-color: var(--accent); }
+.row-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.row-titles { display: flex; flex-direction: column; min-width: 0; }
+.row-titles .r-title, .row-titles .r-artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-actions { display: flex; gap: 8px; }
+.row-actions button { flex: 1; }
+.strength { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.strength span { display: block; height: 100%; background: var(--accent); }
+.kept { margin: 0; color: var(--muted); min-height: var(--tap); display: flex; align-items: center; }
+.ok-text { color: var(--accent) !important; font-weight: 600; margin: 0; }
+.send-song { display: flex; flex-direction: column; gap: 12px; }
+.send-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.send-head h3 { font-size: 16px; }
+.ship-dot { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.6); }
