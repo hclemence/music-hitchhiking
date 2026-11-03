@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Region } from '../backend/types.ts';
-import { MAX_SKY_REGIONS, SKY_BLEND_EPS, SKY_BLEND_POWER, SKY_DESAT, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
+import { horizonColour, MAX_SKY_REGIONS, SKY_BLEND_EPS, SKY_BLEND_POWER, SKY_DESAT, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
 
 /** Plane edge in world units: follows the camera; large enough that the horizon never shows its edge. */
 export const SKY_SIZE = 80000;
@@ -29,6 +29,9 @@ export function skyFragment(quality: 'high' | 'low'): string {
   uniform vec3 uColours[MAX_REGIONS];
   uniform int uCount;
   uniform float uTime;
+  uniform vec2 uCentroid;
+  uniform float uRadius;
+  uniform vec3 uHorizon;
   varying vec2 vMap;
   float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
   float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
@@ -41,7 +44,9 @@ export function skyFragment(quality: 'high' | 'low'): string {
   }
   void main(){
     vec2 p=vMap/${f(SKY_SCALE)};
-    vec2 q=p+.18*vec2(fbm(p*1.5+uTime*.02),fbm(p*1.5+7.+uTime*.018))-.09;
+    float fade=smoothstep(uRadius,uRadius*2.5,distance(vMap,uCentroid));
+    float calm=1.-fade;
+    vec2 q=p+calm*.18*vec2(fbm(p*1.5+uTime*.02),fbm(p*1.5+7.+uTime*.018))-calm*.09;
     vec3 c=vec3(0.);float w=0.;float dmin=1e9;
     for(int i=0;i<MAX_REGIONS;i++){
       if(i>=uCount)break;
@@ -54,8 +59,8 @@ export function skyFragment(quality: 'high' | 'low'): string {
       c+=uColours[i]*k;w+=k;
     }
     c=w>0.?c/w:vec3(${f((SKY_MIN + SKY_MAX) / 2)});
-    c*=.85+.3*fbm(q*3.-uTime*.01);
-    gl_FragColor=vec4(grade(c),1.);
+    c*=1.+calm*(-.15+.3*fbm(q*3.-uTime*.01));
+    gl_FragColor=vec4(mix(grade(c),uHorizon,fade),1.);
   }
 `;
 }
@@ -69,6 +74,9 @@ export function buildSkyMaterial(quality: 'high' | 'low'): THREE.ShaderMaterial 
       uColours: { value: new Float32Array(MAX_SKY_REGIONS * 3) },
       uCount: { value: 0 },
       uTime: { value: 0 },
+      uCentroid: { value: new THREE.Vector2() },
+      uRadius: { value: 1e9 },
+      uHorizon: { value: new THREE.Vector3(0.4, 0.4, 0.4) },
     },
     depthWrite: false,
     depthTest: false,
@@ -89,12 +97,39 @@ export function Sky({ colourSeed, regions, quality = 'high', reducedMotion = fal
     material.uniforms.uCentres!.value = u.centres;
     material.uniforms.uColours!.value = u.colours;
     material.uniforms.uCount!.value = u.count;
+    material.uniforms.uCentroid!.value.set(u.centroid[0], u.centroid[1]);
+    material.uniforms.uRadius!.value = u.radius;
+    horizons.current = Array.from({ length: u.count }, (_, i) =>
+      horizonColour([u.colours[i * 3]!, u.colours[i * 3 + 1]!, u.colours[i * 3 + 2]!]));
+    centres.current = u.centres;
+    count.current = u.count;
+    seeded.current = false;
   }, [material, colourSeed, regions]);
 
   const mesh = useRef<THREE.Mesh>(null);
+  const horizons = useRef<[number, number, number][]>([]);
+  const centres = useRef<Float32Array>(new Float32Array(0));
+  const count = useRef(0);
+  const seeded = useRef(false);
+  const fwd = useMemo(() => new THREE.Vector3(), []);
   useFrame(({ clock, camera }) => {
     // The plane follows the camera so the horizon never shows its edge (the shader uses world coordinates).
     mesh.current?.position.set(camera.position.x, -1, camera.position.z);
+    // Horizon colour: the nearest region to where the camera looks, eased so it never pops.
+    camera.getWorldDirection(fwd);
+    if (count.current > 0 && fwd.y < -1e-3) {
+      const t = -camera.position.y / fwd.y;
+      const tx = camera.position.x + fwd.x * t, tz = camera.position.z + fwd.z * t;
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < count.current; i++) {
+        const d = (centres.current[i * 2]! - tx) ** 2 + (centres.current[i * 2 + 1]! - tz) ** 2;
+        if (d < bd) { bd = d; best = i; }
+      }
+      const h = horizons.current[best]!;
+      const v = material.uniforms.uHorizon!.value as THREE.Vector3;
+      if (!seeded.current) { v.set(h[0], h[1], h[2]); seeded.current = true; }
+      else v.set(v.x + (h[0] - v.x) * 0.05, v.y + (h[1] - v.y) * 0.05, v.z + (h[2] - v.z) * 0.05);
+    }
     // Low quality drops the ambient drift entirely.
     material.uniforms.uTime!.value = quality === 'low' ? 0 : clock.elapsedTime * (reducedMotion ? 0.25 : 1);
   });

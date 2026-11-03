@@ -52,10 +52,33 @@ function parseHex(hex: string): [number, number, number] {
   return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+export const SKY_FADE_PAD = 300;
+export const SKY_FADE_END = 2.5; // fade is complete at this multiple of the radius
+
+/** 0 inside `radius` of the centroid, 1 beyond 2.5 x radius, smooth between. */
+export function skyFade(distFromCentroid: number, radius: number): number {
+  const t = Math.min(1, Math.max(0, (distFromCentroid - radius) / (radius * (SKY_FADE_END - 1))));
+  return t * t * (3 - 2 * t);
+}
+
+/** Calm, colourful horizon colour from a region's raw colour: graded, then lightened slightly toward 0.6. */
+export function horizonColour(raw: RGB): [number, number, number] {
+  const g = gradeSkyColour(raw);
+  return [g[0] + (0.6 - g[0]) * 0.15, g[1] + (0.6 - g[1]) * 0.15, g[2] + (0.6 - g[2]) * 0.15];
+}
+
+/** TS mirror of the shader's far-field fade: blends the (graded) sky colour toward the horizon colour. */
+export function fadeToHorizon(
+  graded: RGB, horizon: RGB, distFromCentroid: number, radius: number,
+): [number, number, number] {
+  const f = skyFade(distFromCentroid, radius);
+  return [0, 1, 2].map((k) => graded[k]! + (horizon[k]! - graded[k]!) * f) as [number, number, number];
+}
+
 export function skyUniforms(
   colourSeed: string,
   regions: readonly Region[],
-): { centres: Float32Array; colours: Float32Array; count: number } {
+): { centres: Float32Array; colours: Float32Array; count: number; centroid: [number, number]; radius: number } {
   const valid = regions.filter((r) => Number.isFinite(r.id) && Number.isFinite(r.x) && Number.isFinite(r.y));
   const sorted = [...valid].sort((a, b) => a.id - b.id).slice(0, MAX_SKY_REGIONS);
   const palette = regionColours(colourSeed, sorted);
@@ -66,5 +89,10 @@ export function skyUniforms(
     centres[i * 2 + 1] = r.y;
     colours.set(parseHex(palette.get(r.id)!), i * 3); // raw: the shader grades the blend once
   });
-  return { centres, colours, count: sorted.length };
+  let cx = 0, cy = 0;
+  for (const r of sorted) { cx += r.x; cy += r.y; }
+  if (sorted.length) { cx /= sorted.length; cy /= sorted.length; }
+  let radius = SKY_FADE_PAD;
+  for (const r of sorted) radius = Math.max(radius, Math.hypot(r.x - cx, r.y - cy) + SKY_FADE_PAD);
+  return { centres, colours, count: sorted.length, centroid: [cx, cy], radius };
 }

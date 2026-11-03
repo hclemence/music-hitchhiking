@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { regionPalette } from '@core/palette.ts';
-import { blendRegionColours, contrastWithWhite, gradeSkyColour, MAX_SKY_REGIONS, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
+import { blendRegionColours, contrastWithWhite, fadeToHorizon, horizonColour, skyFade, gradeSkyColour, MAX_SKY_REGIONS, SKY_MAX, SKY_MIN, skyUniforms } from './sky.ts';
 import type { Region } from '../backend/types.ts';
 
 const hex = (h: string): [number, number, number] => {
@@ -89,5 +89,29 @@ describe('blendRegionColours', () => {
     expect(Math.hypot(...(at.map((v, k) => v - col(0)[k]!) as [number, number, number]))).toBeLessThan(0.02);
     const mid = blendRegionColours([0.5, 0], u.centres, u.colours, u.count);
     expect(Math.hypot(...(mid.map((v, k) => v - col(0)[k]!) as [number, number, number]))).toBeGreaterThan(0.01);
+  });
+});
+
+describe('far-field fade', () => {
+  const g: [number, number, number] = [0.3, 0.5, 0.2];
+  const h = horizonColour([0.9, 0.2, 0.3]);
+  it('leaves points inside R unchanged and gives the horizon colour at 3R', () => {
+    expect(fadeToHorizon(g, h, 500, 1000)).toEqual(g);
+    expect(fadeToHorizon(g, h, 1000, 1000)).toEqual(g);
+    expect(fadeToHorizon(g, h, 3000, 1000)).toEqual(h);
+  });
+  it('is monotonic and smooth between R and 2.5R', () => {
+    let prev = 0;
+    for (let d = 1000; d <= 2500; d += 50) { const f = skyFade(d, 1000); expect(f).toBeGreaterThanOrEqual(prev); prev = f; }
+    expect(skyFade(1000, 1000)).toBe(0); expect(skyFade(2500, 1000)).toBe(1);
+  });
+  it('horizon colour stays within the clamp', () => {
+    for (const c of [[1, 0, 0], [0, 0, 0], [1, 1, 1], [0, 0, 1]] as const)
+      for (const v of horizonColour(c)) { expect(v).toBeGreaterThanOrEqual(SKY_MIN - 1e-9); expect(v).toBeLessThanOrEqual(SKY_MAX + 1e-9); }
+  });
+  it('skyUniforms gives the centroid and radius = farthest centre + 300', () => {
+    const u = skyUniforms('s', [region(0, 0, 0), region(1, 1000, 0)]);
+    expect(u.centroid).toEqual([500, 0]);
+    expect(u.radius).toBe(800);
   });
 });
