@@ -14,17 +14,17 @@ describe('encounterFlowReducer', () => {
   });
 
   it('starts idle with nothing parked', () => {
-    expect(initialEncounterFlow).toEqual({ hopId: null, phase: 'idle', dueAt: null, current: null, parked: [], popup: null });
+    expect(initialEncounterFlow).toEqual({ hopId: null, phase: 'idle', dueAt: null, current: null, parked: [], popup: null, waiting: false });
   });
 
   it('arrival goes pending with dueAt = now + ARRIVAL_DELAY_MS and clears the last stop', () => {
     const s = run(arrived('h1', 1000), revealed('h1', 'd1', 2500), arrived('h2', 9000));
-    expect(s).toEqual({ hopId: 'h2', phase: 'pending', dueAt: 9000 + ARRIVAL_DELAY_MS, current: null, parked: [], popup: null });
+    expect(s).toEqual({ hopId: 'h2', phase: 'pending', dueAt: 9000 + ARRIVAL_DELAY_MS, current: null, parked: [], popup: null, waiting: false });
   });
 
   it('a reveal brings the dock in, parks it and opens its pop-up', () => {
     const s = run(arrived('h1', 1000), revealed('h1', 'd1', 2500));
-    expect(s).toEqual({ hopId: 'h1', phase: 'arriving', dueAt: null, current: 'd1', parked: ['d1'], popup: 'd1' });
+    expect(s).toEqual({ hopId: 'h1', phase: 'arriving', dueAt: null, current: 'd1', parked: ['d1'], popup: 'd1', waiting: false });
     expect(encounterFlowReducer(s, flyInDone('d1')).phase).toBe('shown');
   });
 
@@ -52,6 +52,9 @@ describe('encounterFlowReducer', () => {
     expect(s.phase).toBe('pending');
     expect(s.dueAt).toBe(5000 + WAIT_DRIFT_MS);
     expect(s.parked).toEqual(['d1']);
+    expect(s.waiting).toBe(true);
+    expect(run(arrived('h1', 1000), revealed('h1', 'd1', 2500), flyInDone('d1'), waitPressed(5000), revealed('h1', 'd2', 5800)).waiting).toBe(false);
+    expect(run(arrived('h1', 1000)).waiting).toBe(false);
   });
 
   it('Wait during the fly-in does nothing (the ship lands first)', () => {

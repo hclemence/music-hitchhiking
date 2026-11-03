@@ -7,6 +7,7 @@ import { EncounterPopup } from './EncounterPopup.tsx';
 import { MiniMap } from './MiniMap.tsx';
 import { OfflineBanner } from './OfflineBanner.tsx';
 import { latestHopAtSong } from '../map/route.ts';
+import { scheduleThumbnailWarmup } from '../map/shipThumbnail.ts';
 
 export type Screen = 'explore' | 'history' | 'inbox' | 'ship' | 'dock';
 
@@ -83,6 +84,9 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
   );
   // A ship docked where you are (Ruling 11): its card has Like and links but no Hitchhike.
   const currentId = current?.id ?? null;
+  // Once the map has first rendered, build the thumbnail renderer while idle so the first pop-up does not stall.
+  const mapShown = currentId !== null;
+  useEffect(() => (mapShown ? scheduleThumbnailWarmup() : undefined), [mapShown]);
   useEffect(() => { setHereDockId(null); }, [currentId]);
   const hereDock = hereDockId ? x.hereDocks.find((d) => d.id === hereDockId) ?? null : null;
   const hereCard = hereDock && current
@@ -108,7 +112,7 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           docks={map.docks}
           colourSeed={x.profile!.colourSeed}
           currentSongId={current.id}
-          hereDocks={x.hereDocks}
+          waiting={enc.waiting}
           myDockId={x.myDock?.id ?? null}
           myShipColour={x.profile!.shipColour}
           routeHops={x.hops}
@@ -150,7 +154,7 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           )}
         </div>
       </div>
-      <section className="sheet" aria-label="Encounters" aria-live="polite">
+      <section className="sheet" aria-label="Encounters">
         {hereCard ? (
           <div className="here-card" aria-label="Docked here">
             <EncounterCard
@@ -178,7 +182,7 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
         )}
         <nav className="toolbar" aria-label="Actions">
           <button type="button" onClick={x.actions.home} disabled={busy || !homeId || current?.id === homeId}>Home</button>
-          <button type="button" onClick={x.actions.wait} disabled={x.flight !== null || enc.phase === 'arriving'}>
+          <button type="button" onClick={x.actions.wait} disabled={x.flight !== null || x.pending || enc.phase === 'arriving'}>
             Wait
           </button>
           {backend.mode !== 'demo' && (

@@ -27,7 +27,7 @@ export function EncounterPopup({ encounter, nobodyLeft, kept, pending, onLike, o
   if (!encounter) {
     if (!nobodyLeft) return null;
     return (
-      <div className="popup" role="dialog" aria-labelledby={titleId}>
+      <div className="popup" role="dialog" aria-live="polite" aria-labelledby={titleId}>
         <p id={titleId} className="popup-empty">{NOBODY_LEFT}</p>
         <div className="popup-actions single">
           <button type="button" className="secondary" onClick={onClose}>Close</button>
@@ -37,7 +37,7 @@ export function EncounterPopup({ encounter, nobodyLeft, kept, pending, onLike, o
   }
   const { song, dock, othersCount } = encounter;
   return (
-    <div className="popup" role="dialog" aria-labelledby={titleId} data-dock-id={dock.id}>
+    <div className="popup" role="dialog" aria-live="polite" aria-labelledby={titleId} data-dock-id={dock.id}>
       <div className="popup-top">
         <h2 id={titleId} className="popup-title">{ENCOUNTER_TITLE}</h2>
         <button type="button" className="popup-close" aria-label="Close" onClick={onClose}>×</button>

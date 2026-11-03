@@ -24,8 +24,10 @@ export type EncounterView = {
   parked: ShownEncounter[];
   popup: ShownEncounter | null;
   nobodyLeft: boolean;
+  /** A Wait reveal is pending (your ship drifts a little meanwhile). */
+  waiting: boolean;
 };
-const NO_ENCOUNTER: EncounterView = { phase: 'idle', current: null, parked: [], popup: null, nobodyLeft: false };
+const NO_ENCOUNTER: EncounterView = { phase: 'idle', current: null, parked: [], popup: null, nobodyLeft: false, waiting: false };
 
 const RELOAD_MS = 5 * 60 * 1000;
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000];
@@ -196,24 +198,34 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
   const current = hop ? songs.get(hop.songId) ?? null : null;
   const pending = journey.pending !== null;
 
-  // Fetch the current song when it is not one of the map's stars; retry while offline.
-  const missingSongId = map && hop && !songs.has(hop.songId) ? hop.songId : null;
+  // Fetch every song on today's route (and the current one) that is not one of the map's stars, in
+  // one batched call (the backend chunks it by 200), so the trail, visited rings, tap-to-move and
+  // the mini-map all work after a reload. Retries with backoff while offline.
+  const missingKey = useMemo(() => {
+    if (!map) return '';
+    const ids = new Set<string>();
+    for (const h of journey.journey?.hops ?? []) if (!songs.has(h.songId)) ids.add(h.songId);
+    if (hop && !songs.has(hop.songId)) ids.add(hop.songId);
+    return [...ids].sort().join('\n');
+  }, [map, journey.journey, hop, songs]);
+  const currentMissing = !!(map && hop && !songs.has(hop.songId));
   useEffect(() => {
-    if (!missingSongId) return;
+    if (!missingKey) return;
+    const ids = missingKey.split('\n');
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
     const tryFetch = () => {
-      backend.getSongs([missingSongId]).then((found) => {
+      backend.getSongs(ids).then((found) => {
         if (cancelled || !alive.current) return;
         setSongOffline(false);
         if (found.length > 0) setExtraSongs((prev) => new Map([...prev, ...found.map((s) => [s.id, s] as const)]));
-        else showToast("Couldn't find where you are");
+        else if (currentMissing) showToast("Couldn't find where you are");
       }).catch((e) => {
         if (cancelled || !alive.current) return;
         if (!RETRYABLE.has(codeOf(e))) {
           setSongOffline(false);
-          showToast("Couldn't find where you are");
+          if (currentMissing) showToast("Couldn't find where you are");
           return;
         }
         setSongOffline(true);
@@ -226,7 +238,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
       clearTimeout(timer);
       setSongOffline(false);
     };
-  }, [backend, missingSongId, showToast]);
+  }, [backend, missingKey, currentMissing, showToast]);
 
   // ---- Encounters: one at a time (spec §7) ----
   // The stop whose encounters are shown: the confirmed current hop. While a hop is pending its id
@@ -308,6 +320,7 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
       parked: flow.parked.map(shown).filter((e): e is ShownEncounter => e !== null),
       popup: shown(flow.popup),
       nobodyLeft: flow.phase === 'none',
+      waiting: flow.waiting && flow.phase === 'pending',
     };
   }, [flow, stopId, met, songs]);
 

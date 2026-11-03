@@ -11,7 +11,7 @@ import { Sky } from './Sky.tsx';
 import { Shuttle } from './Shuttle.tsx';
 import { Ships, type MyPose } from './Ships.tsx';
 import { Route } from './Route.tsx';
-import { arcPoint, createQualityMonitor } from './motion.ts';
+import { arcPoint, createQualityMonitor, dprFor, easeToward } from './motion.ts';
 import { shipWorldLength } from './shuttle.ts';
 import {
   createFocus, createTapGesture, DEFAULT_VISIBLE_WIDTH, distanceForWidth, FLIGHT_MS, MAP_FOV, MAP_PITCH_DEG,
@@ -40,8 +40,8 @@ export type MapSceneProps = {
   onStarDoubleTap?: (songId: string) => void;
   onShipTap?: (dockId: string) => void;
   onVisitedTap?: (songId: string) => void;
-  /** Passed by Explore for its Docked-here card; the scene ignores it (the ships layer draws every dock). */
-  hereDocks?: PublicDock[];
+  /** A Wait reveal is pending: your ship drifts a little, then settles back. */
+  waiting?: boolean;
 };
 
 const PICK_RADIUS_PX = 32;
@@ -52,6 +52,9 @@ const VIEW_DIR = new THREE.Vector3(0, Math.sin(PITCH), Math.cos(PITCH));
 /** Where your ship sits beside its star, in ship lengths (right and slightly up-screen). */
 const DOCK_OFFSET = { x: 0.95, z: -0.45 };
 const LIFT_LOCAL = 0.25; // the ship floats this far (in lengths) above the plane
+/** Wait: how far your ship drifts (in ship lengths) and how long it takes to ease out or back. */
+const WAIT_DRIFT_LENGTHS = 1.4;
+const WAIT_EASE_MS = 400;
 const DOCKED_YAW = Math.atan2(-1, 0.35);
 
 type Controls = React.ComponentRef<typeof MapControls>;
@@ -117,7 +120,7 @@ const ringMaterial = new THREE.ShaderMaterial({
 
 /** Your shuttle beside its star (or flying on an arc), a fixed apparent size, with a soft halo. */
 function MyShip({
-  at, flight, colour, controls, startDistance, onEnd, pose,
+  at, flight, colour, controls, startDistance, onEnd, pose, waiting,
 }: {
   at: { x: number; y: number };
   flight: FlightState | null;
@@ -126,6 +129,7 @@ function MyShip({
   startDistance: number;
   onEnd: () => void;
   pose: React.RefObject<MyPose>;
+  waiting: boolean;
 }) {
   const reduced = useMemo(prefersReducedMotion, []);
   const group = useRef<THREE.Group>(null);
@@ -140,7 +144,8 @@ function MyShip({
   const onEndRef = useRef(onEnd);
   onEndRef.current = onEnd;
 
-  useFrame(({ camera, size }) => {
+  const waitAmt = useRef(0);
+  useFrame(({ camera, size }, dt) => {
     const g = group.current;
     const c = controls.current;
     if (!g) return;
@@ -162,11 +167,14 @@ function MyShip({
     const dist = c ? camera.position.distanceTo(c.target) : startDistance;
     const len = shipWorldLength(dist, MAP_FOV, size.height, { defaultDistance: startDistance, mine: false });
     g.scale.setScalar(len);
-    g.position.set(x + DOCK_OFFSET.x * len, h + len * 0.25, y + DOCK_OFFSET.z * len);
+    // Wait: drift a little off to the side (eased in and out), then settle back when the reveal comes.
+    waitAmt.current = easeToward(waitAmt.current, waiting && !flight ? 1 : 0, Math.min(dt, 0.1) * 1000, WAIT_EASE_MS);
+    const wd = waitAmt.current * waitAmt.current * (3 - 2 * waitAmt.current) * WAIT_DRIFT_LENGTHS;
+    g.position.set(x + DOCK_OFFSET.x * len + wd * 0.8 * len, h + len * 0.25, y + DOCK_OFFSET.z * len + wd * 0.6 * len);
     g.rotation.y = yaw;
     ringMaterial.uniforms.uPulse!.value = 0.5 + 0.5 * Math.sin((performance.now() / 2000) * Math.PI * 2 * (reduced ? 0.25 : 1));
     const ps = pose.current;
-    ps.x = g.position.x; ps.y = g.position.z; ps.h = h; ps.len = len;
+    ps.x = g.position.x - wd * 0.8 * len; ps.y = g.position.z - wd * 0.6 * len; ps.h = h; ps.len = len;
     if (finished && !done.current) {
       done.current = true;
       onEndRef.current();
@@ -191,7 +199,7 @@ function MyShip({
 function Scene(props: MapSceneProps) {
   const {
     stars, regions, colourSeed, currentSongId, extraSongs, routeHops, myShipColour,
-    onStarDoubleTap, flight, onFlightEnd, docks, myDockId, parked, arriving, onShipTap, onVisitedTap,
+    onStarDoubleTap, flight, onFlightEnd, docks, myDockId, parked, arriving, onShipTap, onVisitedTap, waiting = false,
   } = props;
   const controls = useRef<Controls>(null);
   const camera = useThree((s) => s.camera);
@@ -204,7 +212,8 @@ function Scene(props: MapSceneProps) {
   const startRef = useRef(startDistance);
   startRef.current = startDistance;
 
-  // Quality: a half-resolution, non-drifting sky when frames run slow.
+  // Quality: when frames run slow, fewer sky octaves, a frozen sky, no ship drift and a pixel ratio of 1.
+  // Pauses (tab return, stalls) and a 2 s warm-up are not judged; see createQualityMonitor.
   const monitor = useMemo(() => createQualityMonitor(), []);
   const [quality, setQuality] = useState<'high' | 'low'>('high');
   const qualityRef = useRef(quality);
@@ -212,6 +221,13 @@ function Scene(props: MapSceneProps) {
     const q = monitor.sample(delta * 1000);
     if (q !== qualityRef.current) { qualityRef.current = q; setQuality(q); }
   });
+  useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState === 'visible') monitor.restart(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [monitor]);
+  const setDpr = useThree((s) => s.setDpr);
+  useEffect(() => { setDpr(dprFor(quality, globalThis.devicePixelRatio || 1)); }, [quality, setDpr]);
   const reducedMotion = useMemo(prefersReducedMotion, []);
 
   // Songs on the map, plus any the journey visited that are not stars.
@@ -315,7 +331,7 @@ function Scene(props: MapSceneProps) {
         <MyShip
           key={flight ? flight.startedAt : 'docked'}
           at={currentPos} flight={flight} colour={myShipColour} controls={controls}
-          startDistance={startDistance} onEnd={() => onFlightEnd?.()} pose={pose}
+          startDistance={startDistance} onEnd={() => onFlightEnd?.()} pose={pose} waiting={waiting}
         />
       )}
       <Ships

@@ -14,7 +14,10 @@ import { Shell } from './Shell.tsx';
 type StubProps = {
   stars: { id: string }[];
   currentSongId: string;
-  hereDocks?: { id: string; songId: string }[];
+  docks: { id: string; songId: string }[];
+  myDockId: string | null;
+  extraSongs: ReadonlyMap<string, { id: string }>;
+  waiting?: boolean;
   parked: { dock: { id: string } }[];
   arriving: { dockId: string; startedAt: number } | null;
 };
@@ -30,13 +33,14 @@ vi.mock('../backend/retry.ts', async (importOriginal) => {
 vi.mock('../map/MapScene.tsx', async () => {
   const { useEffect } = await import('react');
   type P = StubProps & {
-    docks: { id: string; songId: string }[];
     routeHops: { songId: string }[];
     flight: unknown;
     onShipTap?: (id: string) => void;
     onVisitedTap?: (songId: string) => void;
     onFlightEnd?: () => void;
   };
+  // The ships docked at your star, other than your own (what Explore's Docked-here card is for).
+  const hereDocksOf = (p: P) => p.docks.filter((d) => d.songId === p.currentSongId && d.id !== p.myDockId);
   function MapScene(p: P) {
     scene.props = p;
     useEffect(() => { if (p.flight) p.onFlightEnd?.(); }, [p.flight]);
@@ -45,7 +49,7 @@ vi.mock('../map/MapScene.tsx', async () => {
         {[...new Map(p.docks.map((d) => [d.songId, d])).values()].map((d) => (
           <button key={d.id} aria-label={`ship ${d.songId}`} onClick={() => p.onShipTap?.(d.id)} />
         ))}
-        {(p.hereDocks ?? []).map((d) => (
+        {hereDocksOf(p).map((d) => (
           <button key={d.id} aria-label={`ship here ${d.id}`} onClick={() => p.onShipTap?.(d.id)} />
         ))}
         {p.parked.map((e) => (
@@ -60,6 +64,7 @@ vi.mock('../map/MapScene.tsx', async () => {
   return { MapScene };
 });
 
+vi.mock('../map/shipThumbnail.ts', () => ({ scheduleThumbnailWarmup: vi.fn(() => () => {}) }));
 vi.mock('../map/ShipPreview.tsx', () => ({ ShipPreview: () => null }));
 vi.mock('./ShipBadge.tsx', () => ({
   ShipBadge: ({ colour }: { colour: string }) => <span data-testid="ship-badge" data-colour={colour} />,
@@ -74,6 +79,9 @@ class MemoryStorage implements Storage {
   removeItem(k: string) { this.m.delete(k); }
   setItem(k: string, v: string) { this.m.set(k, String(v)); }
 }
+
+/** The ships docked at the star the map shows, other than your own. */
+const hereDockIds = () => scene.props!.docks.filter((d) => d.songId === scene.props!.currentSongId && d.id !== scene.props!.myDockId).map((d) => d.id);
 
 const sample = sampleMapJson as SampleMap;
 const TZ = 'Europe/London';
@@ -310,6 +318,24 @@ describe('Explore encounters', () => {
     expect(popupDock()).not.toBe(first);
     expect(parkedIds()).toHaveLength(2);
     expect(scene.props!.arriving?.dockId).toBe(popupDock());
+  });
+
+  it('your ship drifts (waiting) from Wait until the reveal, and Wait is disabled while a hop is pending', async () => {
+    const base = demo();
+    const d = deferred();
+    const backend: Backend = { ...base, async hop(...a) { await d.promise; return base.hop(...a); } };
+    await open(backend);
+    await tick(FLY_IN_MS);
+    expect(scene.props!.waiting).toBe(false);
+    await wait();
+    expect(scene.props!.waiting).toBe(true);
+    await tick(WAIT_DRIFT_MS);
+    expect(scene.props!.waiting).toBe(false);
+    await tick(FLY_IN_MS);
+    await hitchhike();
+    expect(screen.getByRole('button', { name: 'Wait' })).toBeDisabled();
+    await act(async () => { d.resolve(); });
+    await settle();
   });
 
   it('Wait is unavailable while the ship flies in', async () => {
@@ -679,7 +705,7 @@ describe('Explore', () => {
     await settle();
     await reveal();
     expect(scene.props!.currentSongId).toBe(at);
-    expect(scene.props!.hereDocks!.map((d) => d.id).sort()).toEqual([...theirs].sort());
+    expect(hereDockIds().sort()).toEqual([...theirs].sort());
     expect(screen.queryByRole('button', { name: `ship here ${own}` })).not.toBeInTheDocument();
     expect(theirs).not.toContain(popupDock());
     const met = popupDock();
@@ -706,7 +732,7 @@ describe('Explore', () => {
     await open(demo());
     const dockId = popupDock();
     await hitchhike();
-    expect(scene.props!.hereDocks!.map((d) => d.id)).toContain(dockId);
+    expect(hereDockIds()).toContain(dockId);
     expect(parkedIds()).not.toContain(dockId);
   });
 
@@ -866,6 +892,65 @@ describe('Explore review fixes', () => {
     expect(here()).toHaveTextContent(HOME.title);
     expect(scene.props!.currentSongId).toBe(HOME.id);
     expect(scene.props!.stars.some((s) => s.id === HOME.id)).toBe(true);
+  });
+
+  it('after a reload, fetches every route song that is not a star in one batched call (RF5)', async () => {
+    const base = demo();
+    await open(base);
+    await hitchhike();
+    await reveal();
+    await tick(FLY_IN_MS);
+    await hitchhike();
+    await reveal();
+    const hops = (await base.currentJourney(TZ))!.hops;
+    expect(hops).toHaveLength(3);
+    const [a, b, c] = hops.map((h) => h.songId) as [string, string, string];
+    expect(new Set([a, b, c]).size).toBe(3);
+    cleanup();
+
+    const asked: string[][] = [];
+    const backend: Backend = {
+      ...base,
+      async loadMap() {
+        const m = await base.loadMap();
+        return { ...m, stars: m.stars.filter((s) => s.id !== a && s.id !== b) };
+      },
+      async getSongs(ids) { asked.push(ids); return base.getSongs(ids); },
+    };
+    render(<Explore backend={backend} tz={TZ} onNavigate={onNavigate} />);
+    await settle();
+    expect(asked).toHaveLength(1);
+    expect([...asked[0]!].sort()).toEqual([a, b].sort());
+    expect([...scene.props!.extraSongs.keys()].sort()).toEqual([a, b].sort());
+    expect(scene.props!.currentSongId).toBe(c);
+    expect(nodeCount()).toBe(3);
+  });
+
+  it('offers the same retry and offline banner while fetching earlier route songs', async () => {
+    const base = demo();
+    await open(base);
+    await hitchhike();
+    await reveal();
+    const first = (await base.currentJourney(TZ))!.hops[0]!.songId;
+    cleanup();
+    let fails = 1;
+    const backend: Backend = {
+      ...base,
+      async loadMap() {
+        const m = await base.loadMap();
+        return { ...m, stars: m.stars.filter((s) => s.id !== first) };
+      },
+      async getSongs(ids) {
+        if (fails-- > 0) throw new BackendError('network');
+        return base.getSongs(ids);
+      },
+    };
+    render(<Explore backend={backend} tz={TZ} onNavigate={onNavigate} />);
+    await settle();
+    expect(screen.getByRole('status')).toHaveTextContent(/offline/i);
+    await tick(1000);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(scene.props!.extraSongs.has(first)).toBe(true);
   });
 
   it('retries fetching the current song while offline', async () => {

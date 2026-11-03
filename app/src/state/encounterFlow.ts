@@ -21,6 +21,8 @@ export type EncounterFlowState = {
   parked: string[];
   /** The dock whose pop-up is open. */
   popup: string | null;
+  /** The pending reveal was asked for with Wait (your ship drifts meanwhile). */
+  waiting: boolean;
 };
 
 export type EncounterFlowAction =
@@ -32,7 +34,7 @@ export type EncounterFlowAction =
   | { type: 'openPopup'; dockId: string };
 
 export const initialEncounterFlow: EncounterFlowState = {
-  hopId: null, phase: 'idle', dueAt: null, current: null, parked: [], popup: null,
+  hopId: null, phase: 'idle', dueAt: null, current: null, parked: [], popup: null, waiting: false,
 };
 
 export const arrived = (hopId: string, now: number): EncounterFlowAction => ({ type: 'arrived', hopId, now });
@@ -46,18 +48,19 @@ export const openPopup = (dockId: string): EncounterFlowAction => ({ type: 'open
 export function encounterFlowReducer(s: EncounterFlowState, a: EncounterFlowAction): EncounterFlowState {
   switch (a.type) {
     case 'arrived':
-      return { hopId: a.hopId, phase: 'pending', dueAt: a.now + ARRIVAL_DELAY_MS, current: null, parked: [], popup: null };
+      return { hopId: a.hopId, phase: 'pending', dueAt: a.now + ARRIVAL_DELAY_MS, current: null, parked: [], popup: null, waiting: false };
     case 'waitPressed':
       // During the fly-in the ship lands first; Wait is offered again once it has.
       if (s.hopId === null || s.phase === 'arriving') return s;
-      return { ...s, phase: 'pending', dueAt: a.now + WAIT_DRIFT_MS };
+      return { ...s, phase: 'pending', dueAt: a.now + WAIT_DRIFT_MS, waiting: true };
     case 'revealed':
       if (a.hopId !== s.hopId) return s;
-      if (a.dockId === null) return { ...s, phase: 'none', dueAt: null, popup: null };
+      if (a.dockId === null) return { ...s, phase: 'none', dueAt: null, popup: null, waiting: false };
       return {
         ...s,
         phase: 'arriving',
         dueAt: null,
+        waiting: false,
         current: a.dockId,
         parked: [...s.parked.filter((d) => d !== a.dockId), a.dockId].slice(-MAX_PARKED),
         popup: a.dockId,

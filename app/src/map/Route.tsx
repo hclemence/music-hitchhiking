@@ -38,8 +38,9 @@ export function Route({
   const segs = useMemo(() => routeSegments(hops, (id) => posOf(id) ?? undefined), [hops, posOf]);
   const solid = useMemo(() => toPoints(segs.filter((s) => !s.dashed)), [segs]);
   const dashed = useMemo(() => toPoints(segs.filter((s) => s.dashed)), [segs]);
-  const mats = useRef<LineMat[]>([]);
-  const reg = (m: unknown) => { if (m && !mats.current.includes(m as LineMat)) mats.current.push(m as LineMat); };
+  // One slot per dashed line; a remounted line replaces its slot, so disposed materials never pile up.
+  const mats = useRef<(LineMat | null)[]>([null, null]);
+  const reg = (slot: number) => (l: { material?: unknown } | null) => { mats.current[slot] = (l?.material as LineMat | undefined) ?? null; };
 
   // Keep dashes a constant length on screen: world length per pixel at the camera's distance.
   useFrame(() => {
@@ -47,7 +48,7 @@ export function Route({
     const persp = camera as THREE.PerspectiveCamera;
     const dist = startDistanceFrom(persp);
     const perPx = (2 * dist * Math.tan((persp.fov * Math.PI) / 360)) / size.height;
-    for (const m of mats.current) { m.dashSize = perPx * DASH_SCREEN_PX; m.gapSize = perPx * DASH_SCREEN_PX; }
+    for (const m of mats.current) if (m) { m.dashSize = perPx * DASH_SCREEN_PX; m.gapSize = perPx * DASH_SCREEN_PX; }
   });
 
   const cb = useRef(onVisitedTap);
@@ -103,8 +104,8 @@ export function Route({
       )}
       {dashed.length > 0 && (
         <>
-          <Line ref={(l) => reg(l?.material)} points={dashed} segments dashed dashSize={4} gapSize={4} lineWidth={7} color="#ffffff" opacity={0.1} {...common} />
-          <Line ref={(l) => reg(l?.material)} points={dashed} segments dashed dashSize={4} gapSize={4} lineWidth={2} color="#ffffff" opacity={0.45} {...common} />
+          <Line ref={reg(0)} points={dashed} segments dashed dashSize={4} gapSize={4} lineWidth={7} color="#ffffff" opacity={0.1} {...common} />
+          <Line ref={reg(1)} points={dashed} segments dashed dashSize={4} gapSize={4} lineWidth={2} color="#ffffff" opacity={0.45} {...common} />
         </>
       )}
     </group>
