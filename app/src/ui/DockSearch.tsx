@@ -63,7 +63,7 @@ export function DockSearch({ backend, onDone }: { backend: Backend; onDone: () =
       <ul className="results">
         {results.map((s) => (
           <li key={s.id}>
-            <button type="button" onClick={() => void choose(s.id)} disabled={busy}>
+            <button type="button" onClick={() => void choose(s.id)} disabled={busy || makeHome === null}>
               <span className="r-title">{s.title}</span>
               <span className="r-artist">{s.artist}</span>
             </button>

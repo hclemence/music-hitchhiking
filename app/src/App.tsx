@@ -2,7 +2,7 @@ import './app.css';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { Backend, SampleMap } from './backend/types.ts';
 import { Shell } from './ui/Shell.tsx';
-import { StartFlow } from './ui/StartFlow.tsx';
+import { StartFlow, RECOVERY_SAVED_KEY } from './ui/StartFlow.tsx';
 import { ShipPicker } from './ui/ShipPicker.tsx';
 import { DockSearch } from './ui/DockSearch.tsx';
 import { NoWebGL, supportsWebGL2 } from './ui/NoWebGL.tsx';
@@ -11,7 +11,12 @@ const SceneHarness = import.meta.env.DEV
   ? lazy(() => import('./dev/SceneHarness.tsx').then((m) => ({ default: m.SceneHarness })))
   : null;
 
+let storageSingleton: Storage | null = null;
 function localStore(): Storage {
+  return (storageSingleton ??= makeStore());
+}
+
+function makeStore(): Storage {
   try {
     if (globalThis.localStorage) return globalThis.localStorage;
   } catch { /* blocked */ }
@@ -44,7 +49,7 @@ async function createBackend(): Promise<Backend> {
   return createSupabaseBackend(createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY), storage);
 }
 
-type Gate = 'loading' | 'error' | 'start' | 'onboardShip' | 'onboardDock' | 'ready';
+type Gate = 'unsavedCode' | 'loading' | 'error' | 'start' | 'onboardShip' | 'onboardDock' | 'ready';
 
 export function App() {
   if (!supportsWebGL2()) return <NoWebGL />;
@@ -57,6 +62,7 @@ export function App() {
 function Main() {
   const [backend, setBackend] = useState<Backend | null>(null);
   const [gate, setGate] = useState<Gate>('loading');
+  const [resumeCode, setResumeCode] = useState<string | undefined>();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   // StrictMode runs effects twice: one boot at a time, so the backend is never swapped
@@ -71,7 +77,12 @@ function Main() {
       setBackend(b);
       if (b.mode === 'live') {
         const session = await b.getSession();
-        setGate(session?.isMember ? 'ready' : 'start');
+        const st = localStore();
+        const unsaved = st.getItem('mh.recoveryCode');
+        if (session?.isMember && unsaved && !st.getItem(RECOVERY_SAVED_KEY)) {
+          setResumeCode(unsaved);
+          setGate('unsavedCode');
+        } else setGate(session?.isMember ? 'ready' : 'start');
       } else {
         const p = await b.getProfile();
         setGate(p.homeSongId ? 'ready' : 'onboardShip');
@@ -95,8 +106,11 @@ function Main() {
       </main>
     );
   }
+  if (gate === 'unsavedCode') {
+    return <StartFlow backend={backend} storage={localStore()} resumeCode={resumeCode} onDone={() => setGate('onboardShip')} />;
+  }
   if (gate === 'start') {
-    return <StartFlow backend={backend} onDone={(kind) => setGate(kind === 'new' ? 'onboardShip' : 'ready')} />;
+    return <StartFlow backend={backend} storage={localStore()} onDone={(kind) => setGate(kind === 'new' ? 'onboardShip' : 'ready')} />;
   }
   if (gate === 'onboardShip') {
     return (

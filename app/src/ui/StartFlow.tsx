@@ -10,13 +10,25 @@ function groups(code: string): string {
   return code.replace(/[^A-Za-z0-9]/g, '').replace(/(.{4})(?=.)/g, '$1 ').toUpperCase();
 }
 
-export function StartFlow({ backend, onDone }: { backend: Backend; onDone: (kind: 'new' | 'returning') => void }) {
-  const [step, setStep] = useState<Step>('choose');
+export const RECOVERY_SAVED_KEY = 'mh.recoveryCodeSaved';
+
+type Props = {
+  backend: Backend;
+  onDone: (kind: 'new' | 'returning') => void;
+  storage?: Storage;
+  /** A code that was shown but never confirmed saved (the page was reloaded): show it first. */
+  resumeCode?: string;
+};
+
+export function StartFlow({ backend, onDone, storage, resumeCode }: Props) {
+  const [step, setStep] = useState<Step>(resumeCode ? 'code' : 'choose');
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(resumeCode ?? '');
   const [copyNote, setCopyNote] = useState<string | null>(null);
+
+  const markSaved = () => { try { storage?.setItem(RECOVERY_SAVED_KEY, '1'); } catch { /* blocked */ } };
 
   const go = (s: Step) => { setStep(s); setText(''); setError(null); };
 
@@ -25,9 +37,10 @@ export function StartFlow({ backend, onDone }: { backend: Backend; onDone: (kind
     setBusy(true);
     setError(null);
     try {
-      const wasMember = (await backend.getSession().catch(() => null))?.isMember === true;
       const r = await backend.redeemInvite(text.trim());
-      if (wasMember) setStep('welcome'); // already someone: no new code to save
+      // A stored code can sign us into an account that already has a home: not a new person.
+      const existing = (await backend.getProfile().catch(() => null))?.homeSongId != null;
+      if (existing) { markSaved(); setStep('welcome'); }
       else { setCode(r.recoveryCode); setStep('code'); }
     } catch (e) {
       setError(errorCopy(e));
@@ -43,6 +56,7 @@ export function StartFlow({ backend, onDone }: { backend: Backend; onDone: (kind
     setError(null);
     try {
       await backend.recover(text);
+      markSaved();
       onDone('returning');
     } catch (e) {
       setError(errorCopy(e));
@@ -64,11 +78,11 @@ export function StartFlow({ backend, onDone }: { backend: Backend; onDone: (kind
     return (
       <main className="start">
         <h1>Your recovery code</h1>
-        <p className="recovery-code" aria-label="Recovery code">{groups(code)}</p>
+        <div className="recovery-code" role="group" aria-label="Recovery code">{groups(code)}</div>
         <p className="warn-text">Save this code. Without it your account can't be recovered.</p>
         <button type="button" className="big" onClick={() => void copy()}>Copy</button>
         {copyNote && <p className="hint" role="status">{copyNote}</p>}
-        <button type="button" className="primary big" onClick={() => onDone('new')}>I've saved it</button>
+        <button type="button" className="primary big" onClick={() => { markSaved(); onDone('new'); }}>I've saved it</button>
       </main>
     );
   }
@@ -94,7 +108,7 @@ export function StartFlow({ backend, onDone }: { backend: Backend; onDone: (kind
   const invite = step === 'invite';
   return (
     <main className="start">
-      <h1>{invite ? 'Enter your invite' : 'Welcome back'}</h1>
+      <h1>{invite ? 'Enter your invite' : 'Sign in with your code'}</h1>
       <form
         className="start-form"
         onSubmit={(e) => { e.preventDefault(); void (invite ? redeem() : recover()); }}

@@ -11,7 +11,22 @@ vi.mock('../map/ShipPreview.tsx', () => ({
   ShipPreview: ({ colour }: { colour: string }) => <div data-testid="preview" data-colour={colour} />,
 }));
 
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+class MemoryStorage implements Storage {
+  private m = new Map<string, string>();
+  get length() { return this.m.size; }
+  clear() { this.m.clear(); }
+  getItem(k: string) { return this.m.get(k) ?? null; }
+  key(i: number) { return [...this.m.keys()][i] ?? null; }
+  removeItem(k: string) { this.m.delete(k); }
+  setItem(k: string, v: string) { this.m.set(k, String(v)); }
+}
+
+const realClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+afterEach(() => {
+  cleanup(); vi.useRealTimers();
+  if (realClipboard) Object.defineProperty(navigator, 'clipboard', realClipboard);
+  else delete (navigator as unknown as Record<string, unknown>).clipboard;
+});
 
 const song = (n: number): Song => ({
   id: `s${n}`, title: `Title ${n}`, artist: `Artist ${n}`, x: 0, y: 0, z: 0, regionId: 0,
@@ -68,7 +83,7 @@ describe('StartFlow', () => {
 
   it('an invite that signs into an existing account says welcome back and skips the code', async () => {
     const user = userEvent.setup();
-    const backend = fake({ getSession: vi.fn(async () => ({ isMember: true })) });
+    const backend = fake({ getProfile: vi.fn(async () => ({ homeSongId: 'h', colourSeed: 'x', shipColour: '#fff' })) });
     const onDone = vi.fn();
     render(<StartFlow backend={backend} onDone={onDone} />);
     await user.click(screen.getByRole('button', { name: 'I have an invite' }));
@@ -78,6 +93,18 @@ describe('StartFlow', () => {
     expect(screen.queryByText(/Save this code/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Continue' }));
     expect(onDone).toHaveBeenCalledWith('returning');
+  });
+
+  it('"I\'ve saved it" records that the code was saved; resuming shows the unsaved code first', async () => {
+    const user = userEvent.setup();
+    const storage = new MemoryStorage();
+    const onDone = vi.fn();
+    render(<StartFlow backend={fake()} storage={storage} resumeCode="ABCDEFGHJKMNPQRS" onDone={onDone} />);
+    expect(screen.getByText('ABCD EFGH JKMN PQRS')).toBeInTheDocument();
+    expect(storage.getItem('mh.recoveryCodeSaved')).toBeNull();
+    await user.click(screen.getByRole('button', { name: "I've saved it" }));
+    expect(storage.getItem('mh.recoveryCodeSaved')).toBe('1');
+    expect(onDone).toHaveBeenCalledWith('new');
   });
 
   it('shows invite errors and stays on the form', async () => {
@@ -118,6 +145,7 @@ describe('StartFlow', () => {
     await user.type(screen.getByLabelText('Recovery code'), typed);
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(backend.recover).toHaveBeenCalledTimes(1);
+    expect(backend.recover).toHaveBeenCalledWith(typed);
     expect(onDone).toHaveBeenCalledWith('returning');
   });
 
@@ -193,6 +221,22 @@ describe('DockSearch', () => {
     expect(backend.setDock).toHaveBeenCalledWith('s2');
     expect(backend.setHome).toHaveBeenCalledWith('s2');
     await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
+  });
+
+  it('result buttons wait for the profile so home is never skipped by an early tap', async () => {
+    let release!: (p: { homeSongId: null; colourSeed: string; shipColour: string }) => void;
+    const backend = fake({ getProfile: vi.fn(() => new Promise<never>((r) => { release = r as unknown as typeof release; })) });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<DockSearch backend={backend} onDone={vi.fn()} />);
+    await user.type(screen.getByRole('searchbox'), 'ab');
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    const btn = await screen.findByRole('button', { name: /Title 1/ });
+    expect(btn).toBeDisabled();
+    await act(async () => release({ homeSongId: null, colourSeed: 'x', shipColour: '#fff' }));
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: /Title 1/ })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: /Title 1/ }));
+    expect(backend.setHome).toHaveBeenCalledWith('s1');
   });
 
   it('does not set home when unchecked, and defaults unchecked when a home exists', async () => {

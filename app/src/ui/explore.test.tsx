@@ -612,19 +612,25 @@ describe('Shell', () => {
     expect(createActionQueue).toHaveBeenCalledTimes(1);
   });
 
-  it('Dock saves over the map, closes the sheet and Explore loads the new dock', async () => {
+  it('Dock saves over the map, closes the sheet and Explore reloads with the new dock', async () => {
     const user = userEvent.setup();
     const backend = demo();
     await backend.setHome(HOME.id);
     await backend.startJourney(TZ, HOME.id);
     render(<Shell backend={backend} tz={TZ} />);
     await findCards();
-    const target = sample.songs[5]!;
+    const loads = vi.spyOn(backend, 'loadMap');
     await user.click(screen.getByRole('button', { name: 'Dock' }));
     const sheet = screen.getByRole('dialog', { name: 'Dock' });
-    await user.type(within(sheet).getByRole('searchbox'), target.title.slice(0, 6));
-    await user.click(await within(sheet).findByRole('button', { name: new RegExp(target.title.slice(0, 6), 'i') }, { timeout: 2000 }));
+    await user.type(within(sheet).getByRole('searchbox'), 'the');
+    await vi.waitFor(() => expect(sheet.querySelector('.results button')).not.toBeNull(), { timeout: 2000 });
+    const first = sheet.querySelector('.results button') as HTMLElement;
+    const title = first.querySelector('.r-title')!.textContent!;
+    const artist = first.querySelector('.r-artist')!.textContent!;
+    const chosen = sample.songs.find((x) => x.title === title && x.artist === artist)!;
+    await user.click(first);
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect((await backend.getMyDock())!.songId).toBeTruthy();
+    expect((await backend.getMyDock())!.songId).toBe(chosen.id);
+    await vi.waitFor(() => expect(loads).toHaveBeenCalled());
   });
 });
