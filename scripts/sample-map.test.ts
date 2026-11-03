@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { buildSampleMap, songUuid } from './sample-map.ts';
-import { nearestRegion } from '../supabase/functions/_shared/core/placement.ts';
 import { SHIP_COLOURS } from '../supabase/functions/_shared/core/palette.ts';
 import { distance } from '../supabase/functions/_shared/core/vec.ts';
 
@@ -26,11 +25,18 @@ describe('buildSampleMap', () => {
     expect(buildSampleMap(input, 'other')).not.toEqual(map);
   });
 
+  it('is flat: every z is 0 and songs sit within 140 of their region centre', () => {
+    for (const r of map.regions) expect(r.z).toBe(0);
+    map.songs.forEach((s, i) => {
+      expect(s.z).toBe(0);
+      expect(s.regionId).toBe(input[i].cluster);
+      expect(distance(s, map.regions[s.regionId])).toBeLessThanOrEqual(140.01);
+    });
+  });
+
   it('has 12 regions, consistent regionIds, symmetric adjacency', () => {
     expect(map.regions).toHaveLength(12);
     map.regions.forEach((r, i) => expect(r.id).toBe(i));
-    const cents = map.regions.map((r) => ({ x: r.x, y: r.y, z: r.z }));
-    for (const s of map.songs) expect(s.regionId).toBe(nearestRegion(s, cents));
     for (const r of map.regions) {
       expect(r.adjacent).not.toContain(r.id);
       expect(r.adjacent.length).toBeGreaterThanOrEqual(1);

@@ -3,9 +3,11 @@ import type { Backend, Song } from '../backend/types.ts';
 import { EncounterCard } from './EncounterCard.tsx';
 import { MapScene } from '../map/MapScene.tsx';
 import { useExplore, type ExploreModel } from '../state/useExplore.ts';
-import { EncounterBar } from './EncounterBar.tsx';
+import { EncounterPopup } from './EncounterPopup.tsx';
 import { MiniMap } from './MiniMap.tsx';
 import { OfflineBanner } from './OfflineBanner.tsx';
+import { latestHopAtSong } from '../map/route.ts';
+import { scheduleThumbnailWarmup } from '../map/shipThumbnail.ts';
 
 export type Screen = 'explore' | 'history' | 'inbox' | 'ship' | 'dock';
 
@@ -70,13 +72,11 @@ export function Explore({ backend, tz, onNavigate, reloadToken, jumpRequest }: P
 }
 
 function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: ExploreModel; onNavigate: Props['onNavigate'] }) {
-  const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
   const [hereDockId, setHereDockId] = useState<string | null>(null);
   const busy = x.pending || x.flight !== null;
   const homeId = x.profile?.homeSongId ?? null;
   const map = x.map!;
   const current = x.current;
-  const encounterSongIds = x.encounters.map((e) => e.songId);
   // The current song may not be one of the map's stars (Review Focus 3): add it so the camera and ship go there.
   const stars = useMemo(
     () => (current && !map.stars.some((s) => s.id === current.id) ? [...map.stars, current] : map.stars),
@@ -84,11 +84,24 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
   );
   // A ship docked where you are (Ruling 11): its card has Like and links but no Hitchhike.
   const currentId = current?.id ?? null;
+  // Once the map has first rendered, build the thumbnail renderer while idle so the first pop-up does not stall.
+  const mapShown = currentId !== null;
+  useEffect(() => (mapShown ? scheduleThumbnailWarmup() : undefined), [mapShown]);
   useEffect(() => { setHereDockId(null); }, [currentId]);
   const hereDock = hereDockId ? x.hereDocks.find((d) => d.id === hereDockId) ?? null : null;
   const hereCard = hereDock && current
     ? { songId: current.id, song: current, dock: hereDock, othersCount: 0, distance: 0 }
     : null;
+  const enc = x.encounter;
+  // The ship flying over to you: Ships times its arc from `startedAt` on the performance clock.
+  const arrivingId = enc.phase === 'arriving' ? enc.current?.dock.id ?? null : null;
+  const arriving = useMemo(
+    () => (arrivingId ? { dockId: arrivingId, startedAt: performance.now() } : null),
+    [arrivingId],
+  );
+  const shownPopup = enc.popup;
+  // A reveal opens its pop-up in front of any Docked-here card.
+  useEffect(() => { if (arrivingId) setHereDockId(null); }, [arrivingId]);
 
   return (
     <>
@@ -99,18 +112,29 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
           docks={map.docks}
           colourSeed={x.profile!.colourSeed}
           currentSongId={current.id}
-          encounterSongIds={encounterSongIds}
-          hereDocks={x.hereDocks}
+          waiting={enc.waiting}
+          myDockId={x.myDock?.id ?? null}
           myShipColour={x.profile!.shipColour}
+          routeHops={x.hops}
+          extraSongs={x.extraSongs}
+          parked={enc.parked}
+          arriving={arriving}
           flight={x.flight}
+          onVisitedTap={(songId) => {
+            if (songId === current.id) return; // already here: never move to a later hop at this song
+            const hopId = latestHopAtSong(x.hops, songId);
+            if (hopId && !busy && hopId !== x.currentHopId) x.actions.moveTo(hopId);
+          }}
           onFlightEnd={x.actions.endFlight}
           onShipTap={(dockId) => {
-            if (x.hereDocks.some((d) => d.id === dockId)) {
+            // A ship parked beside you reopens its pop-up; one docked at your star shows its card.
+            if (enc.parked.some((e) => e.dock.id === dockId)) {
+              setHereDockId(null);
+              x.actions.openEncounter(dockId);
+            } else if (x.hereDocks.some((d) => d.id === dockId)) {
+              x.actions.closeEncounter();
               setHereDockId(dockId);
-              return;
             }
-            setHereDockId(null);
-            setSelectedSongId(map.docks.find((d) => d.id === dockId)?.songId ?? null);
           }}
         />
       )}
@@ -132,7 +156,7 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
       </div>
       <section className="sheet" aria-label="Encounters">
         {hereCard ? (
-          <div className="encounters" aria-label="Docked here">
+          <div className="here-card" aria-label="Docked here">
             <EncounterCard
               encounter={hereCard}
               selected
@@ -143,19 +167,24 @@ function Ready({ backend, model: x, onNavigate }: { backend: Backend; model: Exp
               onClose={() => setHereDockId(null)}
             />
           </div>
-        ) : (
-          <EncounterBar
-            encounters={x.encounters}
-            selectedSongId={selectedSongId}
-            kept={x.liked}
-            disabled={busy}
-            onLike={x.actions.like}
-            onHitchhike={x.actions.hitchhike}
+        ) : (shownPopup || enc.nobodyLeft) && (
+          <EncounterPopup
+            key={shownPopup?.dock.id ?? 'none'}
+            encounter={shownPopup}
+            nobodyLeft={enc.nobodyLeft}
+            kept={shownPopup ? x.liked.has(shownPopup.dock.id) : false}
+            pending={busy}
+            onLike={() => { if (shownPopup) x.actions.like(shownPopup); }}
+            onHitchhike={() => { if (shownPopup) x.actions.hitchhike(shownPopup); }}
+            onClose={x.actions.closeEncounter}
+            thumbnail={arrivingId === null || arrivingId !== shownPopup?.dock.id}
           />
         )}
         <nav className="toolbar" aria-label="Actions">
           <button type="button" onClick={x.actions.home} disabled={busy || !homeId || current?.id === homeId}>Home</button>
-          <button type="button" onClick={x.actions.wait} disabled={x.flight !== null}>Wait</button>
+          <button type="button" onClick={x.actions.wait} disabled={x.flight !== null || x.pending || enc.phase === 'arriving'}>
+            Wait
+          </button>
           {backend.mode !== 'demo' && (
             <>
               <button type="button" onClick={() => onNavigate('history')}>History</button>

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { findEncounters } from '@core/encounters.ts';
-import { seededRng } from '@core/rng.ts';
+import { nextEncounter } from '@core/encounters.ts';
 import type { Encounter, PublicDock } from '@core/types.ts';
 import { createActionQueue, type ActionQueue } from '../backend/retry.ts';
 import {
@@ -10,10 +9,25 @@ import type { FlightState } from '../map/MapScene.tsx';
 import {
   currentHop, initialJourneyState, journeyReducer, pathSongIds, seenDockIds, type JourneyState,
 } from './journey.ts';
+import {
+  FLY_IN_MS, arrived, closePopup, encounterFlowReducer, flyInDone, initialEncounterFlow, openPopup, revealed, waitPressed,
+  type EncounterFlowAction, type EncounterPhase,
+} from './encounterFlow.ts';
 
 export type ExploreMap = { stars: Song[]; docks: PublicDock[]; regions: Region[] };
 export type ShownEncounter = Encounter & { song: Song };
 export type ExploreStatus = 'loading' | 'error' | 'noHome' | 'noJourney' | 'ready';
+/** The encounter at your stop: the latest one, the ships parked beside you, the open pop-up. */
+export type EncounterView = {
+  phase: EncounterPhase;
+  current: ShownEncounter | null;
+  parked: ShownEncounter[];
+  popup: ShownEncounter | null;
+  nobodyLeft: boolean;
+  /** A Wait reveal is pending (your ship drifts a little meanwhile). */
+  waiting: boolean;
+};
+const NO_ENCOUNTER: EncounterView = { phase: 'idle', current: null, parked: [], popup: null, nobodyLeft: false, waiting: false };
 
 const RELOAD_MS = 5 * 60 * 1000;
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000];
@@ -42,7 +56,7 @@ function memoryStorage(): Storage {
 
 /**
  * Everything the Explore screen shows and does: the map, today's journey (optimistic hops),
- * the encounters at the current hop, the offline flag and the actions.
+ * one encounter at a time at the current hop, the offline flag and the actions.
  */
 export function useExplore(backend: Backend, tz: string, opts: { storage?: Storage; reloadToken?: number } = {}) {
   const [map, setMap] = useState<ExploreMap | null>(null);
@@ -52,8 +66,9 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
   const [journeyMissing, setJourneyMissing] = useState(false);
   const [journey, dispatch] = useReducer(journeyReducer, initialJourneyState);
   const [extraSongs, setExtraSongs] = useState<ReadonlyMap<string, Song>>(new Map());
-  const [waitCount, setWaitCount] = useState<Record<string, number>>({});
-  const [encounters, setEncounters] = useState<ShownEncounter[]>([]);
+  const [flow, flowDispatch] = useReducer(encounterFlowReducer, initialEncounterFlow);
+  /** Every encounter revealed this session, by dock id (for the pop-up and the parked ships). */
+  const [met, setMet] = useState<ReadonlyMap<string, Encounter>>(new Map());
   const [hopOffline, setHopOffline] = useState(false);
   const [queueOffline, setQueueOffline] = useState(false);
   const [songOffline, setSongOffline] = useState(false);
@@ -68,9 +83,8 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
   stateRef.current = journey;
   /** Bumped by every local journey change so a slower reload cannot overwrite it. */
   const epoch = useRef(0);
-  const computedKey = useRef<string | null>(null);
-  const waitRef = useRef(waitCount);
-  waitRef.current = waitCount;
+  const flowRef = useRef(flow);
+  flowRef.current = flow;
   const hopRunning = useRef(false);
 
   useEffect(() => {
@@ -184,24 +198,34 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
   const current = hop ? songs.get(hop.songId) ?? null : null;
   const pending = journey.pending !== null;
 
-  // Fetch the current song when it is not one of the map's stars; retry while offline.
-  const missingSongId = map && hop && !songs.has(hop.songId) ? hop.songId : null;
+  // Fetch every song on today's route (and the current one) that is not one of the map's stars, in
+  // one batched call (the backend chunks it by 200), so the trail, visited rings, tap-to-move and
+  // the mini-map all work after a reload. Retries with backoff while offline.
+  const missingKey = useMemo(() => {
+    if (!map) return '';
+    const ids = new Set<string>();
+    for (const h of journey.journey?.hops ?? []) if (!songs.has(h.songId)) ids.add(h.songId);
+    if (hop && !songs.has(hop.songId)) ids.add(hop.songId);
+    return [...ids].sort().join('\n');
+  }, [map, journey.journey, hop, songs]);
+  const currentMissing = !!(map && hop && !songs.has(hop.songId));
   useEffect(() => {
-    if (!missingSongId) return;
+    if (!missingKey) return;
+    const ids = missingKey.split('\n');
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
     const tryFetch = () => {
-      backend.getSongs([missingSongId]).then((found) => {
+      backend.getSongs(ids).then((found) => {
         if (cancelled || !alive.current) return;
         setSongOffline(false);
         if (found.length > 0) setExtraSongs((prev) => new Map([...prev, ...found.map((s) => [s.id, s] as const)]));
-        else showToast("Couldn't find where you are");
+        else if (currentMissing) showToast("Couldn't find where you are");
       }).catch((e) => {
         if (cancelled || !alive.current) return;
         if (!RETRYABLE.has(codeOf(e))) {
           setSongOffline(false);
-          showToast("Couldn't find where you are");
+          if (currentMissing) showToast("Couldn't find where you are");
           return;
         }
         setSongOffline(true);
@@ -214,27 +238,91 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
       clearTimeout(timer);
       setSongOffline(false);
     };
-  }, [backend, missingSongId, showToast]);
+  }, [backend, missingKey, currentMissing, showToast]);
 
-  // Encounters for the current hop, once per (hop, wait) pair.
+  // ---- Encounters: one at a time (spec §7) ----
+  // The stop whose encounters are shown: the confirmed current hop. While a hop is pending its id
+  // is not known yet, so nothing is revealed.
+  const stopId = journey.pending ? null : journey.journey?.currentHopId ?? null;
+  const flowTo = useCallback((a: EncounterFlowAction) => {
+    flowRef.current = encounterFlowReducer(flowRef.current, a); // so a second check in the same tick sees it
+    flowDispatch(a);
+  }, []);
+
+  // Arriving at a new stop (a hop confirmed and its flight landed, a move, a load or a start)
+  // starts the pause before the first reveal. A late reveal for the old stop is dropped by its hop id.
   useEffect(() => {
-    if (!map || !hop || !current) return;
-    const n = waitCount[hop.id] ?? 0;
-    const key = `${hop.id}:${n}`;
-    if (computedKey.current === key) return;
-    computedKey.current = key;
-    const found = findEncounters({
-      current,
-      stars: songs,
-      docks: map.docks,
-      ownDockId: myDock?.id ?? null,
-      pathSongIds: pathSongIds(journey),
-      seenDockIds: seenDockIds(journey, hop.id),
-      rng: seededRng(key),
+    if (!stopId || flight || stopId === flowRef.current.hopId) return;
+    flowTo(arrived(stopId, Date.now()));
+  }, [stopId, flight, flow.hopId, flowTo]);
+
+  const live = useRef({ map, songs, myDock, flight });
+  live.current = { map, songs, myDock, flight };
+  /** Reveal the next encounter once the pause is over (wall clock, so a hidden tab reveals once on return). */
+  const checkReveal = useCallback(() => {
+    const f = flowRef.current;
+    if (f.phase !== 'pending' || f.dueAt === null || f.hopId === null) return;
+    // Hidden tabs still fire (throttled) timers: hold the reveal so the fly-in is seen on return.
+    if (document.visibilityState === 'hidden') return;
+    const now = Date.now();
+    if (now < f.dueAt) return;
+    const s = stateRef.current;
+    const { map: m, songs: byId, myDock: mine, flight: flying } = live.current;
+    if (!m || s.pending || flying || s.journey?.currentHopId !== f.hopId) return;
+    const h = currentHop(s);
+    const here = h ? byId.get(h.songId) : undefined;
+    if (!here) return;
+    const e = nextEncounter({
+      current: here,
+      stars: byId,
+      docks: m.docks,
+      ownDockId: mine?.id ?? null,
+      pathSongIds: pathSongIds(s),
+      metDockIds: seenDockIds(s, f.hopId),
     });
-    setEncounters(found.map((e) => ({ ...e, song: songs.get(e.songId)! })));
-    if (found.length > 0) dispatch({ type: 'encountersShown', hopId: hop.id, dockIds: found.map((e) => e.dock.id) });
-  }, [map, hop, current, songs, myDock, waitCount, journey]);
+    if (e) {
+      setMet((prev) => new Map(prev).set(e.dock.id, e));
+      dispatch({ type: 'encountersShown', hopId: f.hopId, dockIds: [e.dock.id] });
+    }
+    flowTo(revealed(f.hopId, e?.dock.id ?? null, now));
+  }, [flowTo]);
+
+  useEffect(() => {
+    if (flow.phase !== 'pending' || flow.dueAt === null) return;
+    const t = setTimeout(checkReveal, Math.max(0, flow.dueAt - Date.now()));
+    const onVisible = () => { if (document.visibilityState === 'visible') checkReveal(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+    // stopId, flight, map and current: check again as soon as whatever held the reveal back clears.
+  }, [flow.phase, flow.dueAt, flow.hopId, checkReveal, stopId, flight, map, current]);
+
+  // The encountered ship lands beside yours.
+  useEffect(() => {
+    if (flow.phase !== 'arriving' || !flow.current) return;
+    const id = flow.current;
+    const t = setTimeout(() => flowTo(flyInDone(id)), FLY_IN_MS);
+    return () => clearTimeout(t);
+  }, [flow.phase, flow.current, flowTo]);
+
+  const encounter = useMemo((): EncounterView => {
+    if (flow.hopId === null || flow.hopId !== stopId) return NO_ENCOUNTER;
+    const shown = (id: string | null): ShownEncounter | null => {
+      const e = id ? met.get(id) : undefined;
+      const song = e ? songs.get(e.songId) : undefined;
+      return e && song ? { ...e, song } : null;
+    };
+    return {
+      phase: flow.phase,
+      current: shown(flow.current),
+      parked: flow.parked.map(shown).filter((e): e is ShownEncounter => e !== null),
+      popup: shown(flow.popup),
+      nobodyLeft: flow.phase === 'none',
+      waiting: flow.waiting && flow.phase === 'pending',
+    };
+  }, [flow, stopId, met, songs]);
 
   /** Optimistic hop with flight; bad_hop starts today's journey here and retries once; network errors retry. */
   const performHop = useCallback(async (songId: string, kind: 'hitchhike' | 'jump') => {
@@ -257,14 +345,6 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     }
 
     const confirm = (h: Hop) => {
-      const n = waitRef.current[tempId] ?? 0;
-      // Keep the encounters already shown for the optimistic hop.
-      if (computedKey.current === `${tempId}:${n}`) computedKey.current = `${h.id}:${n}`;
-      setWaitCount((w) => {
-        if (!(tempId in w)) return w;
-        const { [tempId]: c, ...rest } = w;
-        return { ...rest, [h.id]: c! };
-      });
       epoch.current++; // a reload that started before this cannot know the hop
       dispatch({ type: 'hopConfirmed', tempId, hop: h });
     };
@@ -381,16 +461,20 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
       if (queue.current) queue.current.enqueue(action);
       else void backend.likeDock(action.dockId).catch(() => {}); // only in the first tick after mount
     },
+    /** Your ship drifts a little, then the next nearest ship is revealed. */
     wait: () => {
-      const h = currentHop(stateRef.current);
-      if (h) setWaitCount((w) => ({ ...w, [h.id]: (w[h.id] ?? 0) + 1 }));
+      const s = stateRef.current;
+      if (s.pending || !s.journey || s.journey.currentHopId !== flowRef.current.hopId) return;
+      flowTo(waitPressed(Date.now()));
     },
+    openEncounter: (dockId: string) => flowTo(openPopup(dockId)),
+    closeEncounter: () => flowTo(closePopup()),
     moveTo,
     startFromHome: () => { if (profile?.homeSongId) void startAt(profile.homeSongId); },
     startAt: (songId: string) => void startAt(songId),
     endFlight: () => setFlight(null),
     retryLoad: () => { setLoadState('loading'); void reload(); },
-  }), [backend, performHop, profile, liked, moveTo, startAt, reload]);
+  }), [backend, performHop, profile, liked, moveTo, startAt, reload, flowTo]);
 
   let status: ExploreStatus;
   if (loadState !== 'done') status = loadState;
@@ -423,7 +507,8 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
     currentHopId: hop?.id ?? null,
     current,
     songs,
-    encounters,
+    extraSongs,
+    encounter,
     hereDocks,
     offline: hopOffline || queueOffline || songOffline,
     pending,

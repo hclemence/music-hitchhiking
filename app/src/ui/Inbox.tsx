@@ -1,3 +1,4 @@
+import { ShipBadge } from './ShipBadge.tsx';
 import { useEffect, useRef, useState } from 'react';
 import type { Backend, InboxItem } from '../backend/types.ts';
 import { errorCopy } from './errors.ts';
@@ -56,7 +57,7 @@ export function Inbox({ backend, onJump }: Props) {
             ) : (
               <>
                 <div className="row-main">
-                  {i.shipColour && <span className="ship-dot" style={{ background: i.shipColour }} aria-hidden="true" />}
+                  {i.shipColour && <ShipBadge colour={i.shipColour} />}
                   <div className="row-titles">
                     <span className="r-title">{i.title}</span>
                     <span className="r-artist">{i.artist}</span>

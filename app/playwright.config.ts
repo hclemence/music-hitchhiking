@@ -17,7 +17,8 @@ const phone = {
   viewport: { width: 390, height: 844 },
   hasTouch: true,
   isMobile: false,
-  deviceScaleFactor: 2,
+  // SwiftShader renders on the CPU: two live WebGL pages at 2x are too slow.
+  deviceScaleFactor: 1,
 };
 
 const webgl = {
@@ -27,7 +28,7 @@ const webgl = {
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 240_000,
+  timeout: 420_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
@@ -41,7 +42,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'live', testMatch: /live-flow\.spec\.ts/, use: { baseURL: `http://localhost:${LIVE_PORT}` } },
-    { name: 'demo', testMatch: /demo-offline\.spec\.ts/ },
+    // The demo has one page, so it keeps the 2x pixel ratio (outline and point-size paths at DPR 2).
+    { name: 'demo', testMatch: /demo-offline\.spec\.ts/, use: { deviceScaleFactor: 2 } },
   ],
   webServer: s
     ? {

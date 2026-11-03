@@ -132,3 +132,38 @@ describe('nearestRegion', () => {
     expect(() => nearestRegion(origin, [])).toThrow();
   });
 });
+
+describe('planar placement', () => {
+  test('placeSong keeps z = 0 and obeys the 2D offset rule', () => {
+    const neighbours: Neighbour[] = [
+      { position: { x: 0, y: 0, z: 0 }, weight: 0.25, localRadius: 50 },
+      { position: { x: 10, y: 0, z: 0 }, weight: 0.75, localRadius: 150 },
+    ];
+    for (let i = 0; i < 200; i++) {
+      const r = placeSong(neighbours, seededRng(`planar-${i}`), { planar: true });
+      expect(r.island).toBe(false);
+      expect(r.position.z).toBe(0);
+      expect(distance(r.position, { x: 7.5, y: 0, z: 0 })).toBeLessThanOrEqual(10);
+    }
+  });
+
+  test('planar islands lie on the ring with z = 0', () => {
+    for (let i = 0; i < 200; i++) {
+      const r = placeSong([], seededRng(`ring-${i}`), { planar: true });
+      expect(r.island).toBe(true);
+      expect(r.position.z).toBe(0);
+      const d = Math.hypot(r.position.x, r.position.y);
+      expect(d).toBeGreaterThanOrEqual(ISLAND_MIN_RADIUS);
+      expect(d).toBeLessThanOrEqual(ISLAND_MAX_RADIUS);
+    }
+  });
+
+  test('placeAround keeps z = 0 at (1 - weight) * localRadius', () => {
+    const anchor: Vec3 = { x: 5, y: -3, z: 0 };
+    for (let i = 0; i < 100; i++) {
+      const p = placeAround(anchor, 0.4, 100, seededRng(`pa-${i}`), { planar: true });
+      expect(p.z).toBe(0);
+      expect(distance(p, anchor)).toBeCloseTo(60, 6);
+    }
+  });
+});

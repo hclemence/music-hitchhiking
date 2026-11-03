@@ -1,3 +1,4 @@
+import { ShipBadge } from './ShipBadge.tsx';
 import { useCallback, useEffect, useState } from 'react';
 import { BackendError, type Backend, type Trace } from '../backend/types.ts';
 import { errorCopy } from './errors.ts';
@@ -69,7 +70,7 @@ export function HistoryDrawer({ backend, onJump }: Props) {
         {traces?.map((t) => (
           <li key={t.id} className="row">
             <div className="row-main">
-              <span className="ship-dot" style={{ background: t.shipColour }} aria-hidden="true" />
+              <ShipBadge colour={t.shipColour} />
               <div className="row-titles">
                 <span className="r-title">{t.originTitle}</span>
                 <span className="r-artist">{t.originArtist}</span>
