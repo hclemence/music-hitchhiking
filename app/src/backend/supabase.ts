@@ -9,11 +9,11 @@ import {
 } from '@core/recovery.ts';
 import type { PublicDock } from '@core/types.ts';
 import {
-  BackendError,
+  BackendError, RECOVERY_CODE_KEY, RECOVERY_SAVED_KEY,
   type Backend, type Hop, type InboxItem, type Journey, type Profile, type Region, type Song, type Trace,
 } from './types.ts';
 
-export const RECOVERY_CODE_KEY = 'mh.recoveryCode';
+export { RECOVERY_CODE_KEY };
 const GET_SONGS_CHUNK = 200;
 const PAGE = 1000;
 /** Server answers that prove the redeem did not happen (so a stored recovery code is useless). */
@@ -194,8 +194,10 @@ export function createSupabaseBackend(client: SupabaseClient, storage: Storage):
         recoveryCode = encodeRecoveryCode(id, bytes);
         secret = secretToBase32(bytes);
         // Stored BEFORE the call: if the response is lost the code still signs in as the new member.
+        // A fresh code is not saved yet, whatever an earlier account's flag says.
         try {
           storage.setItem(RECOVERY_CODE_KEY, recoveryCode);
+          storage.removeItem(RECOVERY_SAVED_KEY);
         } catch {
           throw new BackendError('storage');
         }
@@ -222,19 +224,26 @@ export function createSupabaseBackend(client: SupabaseClient, storage: Storage):
       }
 
       // Success, or any failure where the server state is unknown: the stored code may already work.
+      let signInCode: string;
       try {
         await signInWithCode(recoveryCode);
         return { recoveryCode };
       } catch (signInError) {
         if (!failure) throw signInError;
+        signInCode = signInError instanceof BackendError ? signInError.code : 'unknown';
       }
-      // Remove the stored code only after a definitive pre-redeem rejection.
-      if (DEFINITIVE_REJECTIONS.has(failure.code)) storage.removeItem(RECOVERY_CODE_KEY);
+      // Remove the stored code only after a definitive pre-redeem rejection AND proof that it does
+      // not sign in (bad_code). A network or rate-limit failure proves nothing: keep it.
+      if (DEFINITIVE_REJECTIONS.has(failure.code) && signInCode === 'bad_code') {
+        try { storage.removeItem(RECOVERY_CODE_KEY); } catch { /* blocked */ }
+      }
       throw failure;
     },
 
     async recover(code) {
       await signInWithCode(code);
+      // Signed in with a code the person has: an unconfirmed stored code is no longer needed.
+      try { storage.removeItem(RECOVERY_CODE_KEY); } catch { /* blocked */ }
     },
 
     async loadMap() {

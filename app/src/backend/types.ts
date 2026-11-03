@@ -3,6 +3,11 @@ import type { PublicDock, Star } from '@core/types.ts';
 export type { PublicDock, Star };
 export type { SampleMap } from '../../../scripts/sample-map.ts';
 
+/** The recovery code, kept only until the person confirms they saved it (or signs in with one). */
+export const RECOVERY_CODE_KEY = 'mh.recoveryCode';
+/** Set once the code was confirmed saved; cleared whenever a fresh code is written. */
+export const RECOVERY_SAVED_KEY = 'mh.recoveryCodeSaved';
+
 export type Song = Star & {
   title: string;
   artist: string;

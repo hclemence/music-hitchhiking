@@ -1,6 +1,6 @@
 import './app.css';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import type { Backend, SampleMap } from './backend/types.ts';
+import { RECOVERY_CODE_KEY, type Backend, type SampleMap } from './backend/types.ts';
 import { Shell } from './ui/Shell.tsx';
 import { StartFlow, RECOVERY_SAVED_KEY } from './ui/StartFlow.tsx';
 import { ShipPicker } from './ui/ShipPicker.tsx';
@@ -85,7 +85,7 @@ function Main() {
       if (b.mode === 'live') {
         const session = await b.getSession();
         const st = localStore();
-        const unsaved = st.getItem('mh.recoveryCode');
+        const unsaved = st.getItem(RECOVERY_CODE_KEY);
         if (session?.isMember && unsaved && !st.getItem(RECOVERY_SAVED_KEY)) {
           setResumeCode(unsaved);
           setGate('unsavedCode');

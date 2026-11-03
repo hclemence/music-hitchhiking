@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
+import { encodeRecoveryCode } from '@core/recovery.ts';
 import { createSupabaseBackend } from './supabase.ts';
 
 function memoryStorage(opts: { throwOnSet?: boolean } = {}): Storage {
@@ -60,5 +61,101 @@ describe('SupabaseBackend (unit)', () => {
       .redeemInvite('ABC').catch((e) => e);
     expect(err.code).toBe('storage');
     expect(calls).toBe(0);
+  });
+});
+
+const USER = '11111111-2222-4333-8444-555555555555';
+const BAD_LOGIN = { error: { status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' } };
+const NETWORK_LOGIN = { error: { name: 'AuthRetryableFetchError', status: 0, message: 'Failed to fetch' } };
+const RATE_LIMITED_LOGIN = { error: { status: 429, code: 'over_request_rate_limit', message: 'Too many requests' } };
+const httpError = (status: number, error: string) => ({
+  data: null,
+  error: Object.assign(new Error('Edge Function returned a non-2xx status code'), {
+    name: 'FunctionsHttpError', context: new Response(JSON.stringify({ error }), { status }),
+  }),
+});
+
+/** Auth + functions stand-in: anonymous sign-in makes USER; password sign-in answers with `signIn`. */
+function authClient(opts: {
+  session?: boolean;
+  signIn: () => { error: unknown };
+  invoke: () => unknown;
+}) {
+  let session = opts.session ? { user: { id: USER } } : null;
+  const calls = { signIn: 0, invoke: 0 };
+  const client = {
+    auth: {
+      getSession: async () => ({ data: { session } }),
+      signInAnonymously: async () => { session = { user: { id: USER } }; return { error: null }; },
+      signInWithPassword: async () => { calls.signIn++; return opts.signIn(); },
+    },
+    functions: { invoke: async () => { calls.invoke++; return opts.invoke(); } },
+  } as unknown as SupabaseClient;
+  return { client, calls };
+}
+
+describe('SupabaseBackend recovery code hygiene (Ruling 10)', () => {
+  it('writing a fresh code clears a saved flag left by an earlier account', async () => {
+    const storage = memoryStorage();
+    storage.setItem('mh.recoveryCodeSaved', '1');
+    const { client } = authClient({ signIn: () => ({ error: null }), invoke: () => ({ data: { ok: true }, error: null }) });
+    const { recoveryCode } = await createSupabaseBackend(client, storage).redeemInvite('INVITE');
+    expect(storage.getItem('mh.recoveryCode')).toBe(recoveryCode);
+    expect(storage.getItem('mh.recoveryCodeSaved')).toBeNull();
+  });
+
+  it('clears the saved flag before calling the function (a lost response still resumes the code)', async () => {
+    const storage = memoryStorage();
+    storage.setItem('mh.recoveryCodeSaved', '1');
+    let flagAtInvoke: string | null = 'unset';
+    const { client } = authClient({
+      signIn: () => NETWORK_LOGIN,
+      invoke: () => { flagAtInvoke = storage.getItem('mh.recoveryCodeSaved'); throw new TypeError('Failed to fetch'); },
+    });
+    const err = await createSupabaseBackend(client, storage).redeemInvite('INVITE').catch((e) => e);
+    expect(err.code).toBe('network');
+    expect(flagAtInvoke).toBeNull();
+    expect(storage.getItem('mh.recoveryCode')).not.toBeNull();
+  });
+
+  it('removes the stored code after a definitive rejection when the code does not sign in (bad_code)', async () => {
+    const storage = memoryStorage();
+    const { client } = authClient({ signIn: () => BAD_LOGIN, invoke: () => httpError(400, 'invalid_invite') });
+    const err = await createSupabaseBackend(client, storage).redeemInvite('NOPE').catch((e) => e);
+    expect(err.code).toBe('invalid_invite');
+    expect(storage.getItem('mh.recoveryCode')).toBeNull();
+  });
+
+  it.each([
+    ['network', NETWORK_LOGIN],
+    ['rate_limited', RATE_LIMITED_LOGIN],
+  ])('keeps the stored code after a definitive rejection when the sign-in check failed with %s', async (_, login) => {
+    const storage = memoryStorage();
+    const { client } = authClient({ signIn: () => login, invoke: () => httpError(400, 'invalid_invite') });
+    const err = await createSupabaseBackend(client, storage).redeemInvite('NOPE').catch((e) => e);
+    expect(err.code).toBe('invalid_invite');
+    const kept = storage.getItem('mh.recoveryCode');
+    expect(kept).not.toBeNull();
+    expect(kept!.length).toBeGreaterThan(20);
+  });
+
+  it('keeps the stored code after a non-definitive failure even when sign-in says bad_code', async () => {
+    const storage = memoryStorage();
+    const { client } = authClient({ signIn: () => BAD_LOGIN, invoke: () => httpError(500, 'internal') });
+    const err = await createSupabaseBackend(client, storage).redeemInvite('X').catch((e) => e);
+    expect(err.code).toBe('internal');
+    expect(storage.getItem('mh.recoveryCode')).not.toBeNull();
+  });
+
+  it('a successful recover() removes the stored code; a failed one keeps it', async () => {
+    const code = encodeRecoveryCode(USER, new Uint8Array(10).fill(7));
+    const storage = memoryStorage();
+    storage.setItem('mh.recoveryCode', 'UNSAVED');
+    const bad = authClient({ signIn: () => BAD_LOGIN, invoke: () => null });
+    expect((await createSupabaseBackend(bad.client, storage).recover(code).catch((e) => e)).code).toBe('bad_code');
+    expect(storage.getItem('mh.recoveryCode')).toBe('UNSAVED');
+    const good = authClient({ signIn: () => ({ error: null }), invoke: () => null });
+    await createSupabaseBackend(good.client, storage).recover(code);
+    expect(storage.getItem('mh.recoveryCode')).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BackendError, type Backend } from '../backend/types.ts';
+import { BackendError, RECOVERY_CODE_KEY, RECOVERY_SAVED_KEY, type Backend } from '../backend/types.ts';
 import { decodeRecoveryCode } from '@core/recovery.ts';
 import { errorCopy } from './errors.ts';
 
@@ -10,7 +10,7 @@ function groups(code: string): string {
   return code.replace(/[^A-Za-z0-9]/g, '').replace(/(.{4})(?=.)/g, '$1 ').toUpperCase();
 }
 
-export const RECOVERY_SAVED_KEY = 'mh.recoveryCodeSaved';
+export { RECOVERY_SAVED_KEY };
 
 type Props = {
   backend: Backend;
@@ -28,7 +28,13 @@ export function StartFlow({ backend, onDone, storage, resumeCode }: Props) {
   const [code, setCode] = useState(resumeCode ?? '');
   const [copyNote, setCopyNote] = useState<string | null>(null);
 
-  const markSaved = () => { try { storage?.setItem(RECOVERY_SAVED_KEY, '1'); } catch { /* blocked */ } };
+  // Saved (or the account was already set up): the code is no longer needed on this device.
+  const markSaved = () => {
+    try {
+      storage?.setItem(RECOVERY_SAVED_KEY, '1');
+      storage?.removeItem(RECOVERY_CODE_KEY);
+    } catch { /* blocked */ }
+  };
 
   const go = (s: Step) => { setStep(s); setText(''); setError(null); };
 

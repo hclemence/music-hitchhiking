@@ -99,12 +99,48 @@ describe('StartFlow', () => {
     const user = userEvent.setup();
     const storage = new MemoryStorage();
     const onDone = vi.fn();
+    storage.setItem('mh.recoveryCode', 'ABCDEFGHJKMNPQRS');
     render(<StartFlow backend={fake()} storage={storage} resumeCode="ABCDEFGHJKMNPQRS" onDone={onDone} />);
     expect(screen.getByText('ABCD EFGH JKMN PQRS')).toBeInTheDocument();
     expect(storage.getItem('mh.recoveryCodeSaved')).toBeNull();
     await user.click(screen.getByRole('button', { name: "I've saved it" }));
     expect(storage.getItem('mh.recoveryCodeSaved')).toBe('1');
+    expect(storage.getItem('mh.recoveryCode')).toBeNull(); // no longer kept once saved
     expect(onDone).toHaveBeenCalledWith('new');
+  });
+
+  it('"I\'ve saved it" after a fresh invite removes the stored code', async () => {
+    const user = userEvent.setup();
+    const storage = new MemoryStorage();
+    const backend = fake({
+      redeemInvite: vi.fn(async () => {
+        storage.setItem('mh.recoveryCode', 'ABCD-EFGH-JKMN-PQRS');
+        return { recoveryCode: 'ABCD-EFGH-JKMN-PQRS' };
+      }),
+    });
+    render(<StartFlow backend={backend} storage={storage} onDone={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'I have an invite' }));
+    await user.type(screen.getByLabelText('Invite code'), 'X');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('ABCD EFGH JKMN PQRS');
+    expect(storage.getItem('mh.recoveryCode')).toBe('ABCD-EFGH-JKMN-PQRS'); // kept while it is showing
+    await user.click(screen.getByRole('button', { name: "I've saved it" }));
+    expect(storage.getItem('mh.recoveryCode')).toBeNull();
+    expect(storage.getItem('mh.recoveryCodeSaved')).toBe('1');
+  });
+
+  it('Welcome back removes the stored code', async () => {
+    const user = userEvent.setup();
+    const storage = new MemoryStorage();
+    storage.setItem('mh.recoveryCode', 'ABCDEFGHJKMNPQRS');
+    const backend = fake({ getProfile: vi.fn(async () => ({ homeSongId: 'h', colourSeed: 'x', shipColour: '#fff' })) });
+    render(<StartFlow backend={backend} storage={storage} onDone={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'I have an invite' }));
+    await user.type(screen.getByLabelText('Invite code'), 'X');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Welcome back')).toBeInTheDocument();
+    expect(storage.getItem('mh.recoveryCode')).toBeNull();
+    expect(storage.getItem('mh.recoveryCodeSaved')).toBe('1');
   });
 
   it('shows invite errors and stays on the form', async () => {
@@ -147,6 +183,19 @@ describe('StartFlow', () => {
     expect(backend.recover).toHaveBeenCalledTimes(1);
     expect(backend.recover).toHaveBeenCalledWith(typed);
     expect(onDone).toHaveBeenCalledWith('returning');
+  });
+
+  it('a successful recovery removes any stored code', async () => {
+    const user = userEvent.setup();
+    const storage = new MemoryStorage();
+    storage.setItem('mh.recoveryCode', 'OLD-UNSAVED-CODE');
+    render(<StartFlow backend={fake()} storage={storage} onDone={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'I have a recovery code' }));
+    const { encodeRecoveryCode } = await import('@core/recovery.ts');
+    await user.type(screen.getByLabelText('Recovery code'),
+      encodeRecoveryCode('11111111-2222-4333-8444-555555555555', new Uint8Array(10).fill(7)));
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(storage.getItem('mh.recoveryCode')).toBeNull();
   });
 
   it('a wrong recovery code is rejected locally without a network call', async () => {
