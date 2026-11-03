@@ -457,6 +457,44 @@ describe('Explore review fixes', () => {
     expect(here()).toHaveTextContent(HOME.title);
   });
 
+  it('after the day rolls over a reload keeps the map; the next hitchhike starts today\'s journey (Ruling 9)', async () => {
+    const base = demo();
+    let journeyReads = 0;
+    const backend: Backend = { ...base, async currentJourney(tz) { journeyReads++; return base.currentJourney(tz); } };
+    await open(backend);
+    await findCards();
+    const shown = dockIdsShown();
+    storage.removeItem('mh.demo.journeys'); // 4am: today has no journey yet
+    const reads = journeyReads;
+    await becomeVisible();
+    await waitFor(() => expect(journeyReads).toBeGreaterThan(reads));
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(screen.queryByText('Where do you want to start today?')).not.toBeInTheDocument();
+    expect(screen.getByTestId('map')).toBeInTheDocument();
+    expect(dockIdsShown()).toEqual(shown);
+    expect(here()).toHaveTextContent(HOME.title);
+
+    const [first] = cards();
+    const target = songOf(first!);
+    await userEvent.click(within(first!).getByRole('button', { name: 'Hitchhike' }));
+    expect(here()).toHaveTextContent(target.title);
+    await waitFor(async () => expect((await base.currentJourney(TZ))?.hops).toHaveLength(2));
+    const j = (await base.currentJourney(TZ))!;
+    expect(j.hops[0]!.songId).toBe(HOME.id);
+    expect(j.hops[1]!.songId).toBe(target.id);
+    expect(Object.keys(JSON.parse(storage.getItem('mh.demo.journeys')!))).toHaveLength(1); // one new journey
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(nodeCount()).toBe(2);
+  });
+
+  it('shows the start picker when no journey has been shown yet', async () => {
+    await open(demo(), { start: false });
+    expect(await screen.findByText('Where do you want to start today?')).toBeInTheDocument();
+    await becomeVisible();
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(screen.getByText('Where do you want to start today?')).toBeInTheDocument();
+  });
+
   it('fetches a current song that is not a star and gives it to the map', async () => {
     const base = demo();
     const asked: string[][] = [];

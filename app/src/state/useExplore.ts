@@ -136,7 +136,10 @@ export function useExplore(backend: Backend, tz: string, opts: { storage?: Stora
       setMyDock(d);
       if (!stateRef.current.pending && !hopRunning.current && started === epoch.current) {
         if (j) loadJourney(j);
-        else setJourneyMissing(true);
+        // No journey today (past 4am): keep showing the one already on screen (Ruling 9). The next
+        // hop gets bad_hop and starts today's journey where the person is. The start picker is
+        // only for when nothing has been shown yet.
+        else if (!stateRef.current.journey) setJourneyMissing(true);
       }
       setLoadState('done');
     } catch {
